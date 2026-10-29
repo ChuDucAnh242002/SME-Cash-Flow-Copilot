@@ -4,6 +4,7 @@ import static fi.cashflow.copilot.Models.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.http.*;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.validation.annotation.Validated;
@@ -33,6 +34,18 @@ public class FinanceController {
     @PostMapping("/documents")
     @ResponseStatus(HttpStatus.CREATED)
     public void create(@Valid @RequestBody DocumentInput input) { service.create(input); }
+
+    @PutMapping("/planning")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void planning(@Valid @RequestBody PlanningInput input) { service.setPlanningBalance(input); }
+
+    @PutMapping("/documents/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void update(@PathVariable UUID id, @Valid @RequestBody DocumentUpdate input) { service.update(id, input); }
+
+    @PostMapping("/documents/{id}/cancel")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void cancel(@PathVariable UUID id, @Valid @RequestBody RevisionInput input) { service.cancel(id, input); }
 
     @PostMapping(value = "/documents/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)

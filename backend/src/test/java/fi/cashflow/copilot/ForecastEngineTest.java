@@ -63,4 +63,18 @@ class ForecastEngineTest {
         assertThat(forecast.firstShortfall()).isNull();
         assertThat(forecast.series().getFirst().items()).hasSize(2);
     }
+
+    @Test
+    void expectedDatesOverrideDueDatesAndCancelledDocumentsNeverAffectForecast() {
+        var invoice = new Document(UUID.randomUUID(), Kind.INVOICE, "Customer", "INV", new BigDecimal("100"),
+                today.minusDays(2), BigDecimal.ZERO, today.plusDays(5), false, 1);
+        var cancelled = new Document(UUID.randomUUID(), Kind.EXPENSE, "Supplier", "VOID", new BigDecimal("1000"),
+                today, BigDecimal.ZERO, null, true, 1);
+        var forecast = engine.forecast(BigDecimal.ZERO, List.of(invoice, cancelled), today, 30, 7);
+        assertThat(forecast.firstShortfall()).isNull();
+        assertThat(forecast.series().get(11).balance()).isEqualByComparingTo("0");
+        assertThat(forecast.series().get(12).balance()).isEqualByComparingTo("100");
+        assertThat(forecast.series().stream().flatMap(day -> day.items().stream()).count()).isEqualTo(1);
+        assertThat(invoice.dueDate()).isEqualTo(today.minusDays(2));
+    }
 }

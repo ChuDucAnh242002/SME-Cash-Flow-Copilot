@@ -11,6 +11,7 @@ import java.time.*;
 import java.util.UUID;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.*;
@@ -46,6 +47,20 @@ class FinanceIntegrationTest {
         @Bean @Primary Clock fixedClock() {
             return Clock.fixed(Instant.parse("2026-10-29T10:00:00Z"), ZoneId.of("Europe/Helsinki"));
         }
+    }
+
+    @BeforeEach
+    void clearWorkspace() {
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.jdbc().update("DELETE FROM allocation");
+            store.jdbc().update("DELETE FROM document");
+            store.jdbc().update("DELETE FROM bank_transaction");
+            store.jdbc().update("DELETE FROM account");
+            store.jdbc().update("DELETE FROM outbox");
+            store.jdbc().update("DELETE FROM processed_event");
+            store.jdbc().update("UPDATE workspace SET planning_balance=NULL,last_sync=NULL,sync_error=NULL,last_reconciled=NULL");
+        });
     }
 
     @Test
@@ -118,5 +133,116 @@ class FinanceIntegrationTest {
         assertThat(partial.paidAmount()).isEqualByComparingTo("40");
         assertThat(partial.remaining()).isEqualByComparingTo("60");
         assertThat(store.transactions().stream().filter(t -> t.externalId().equals("excess-1")).findFirst().orElseThrow().documentId()).isNull();
+    }
+
+    @Test
+    void planningBalanceAndDocumentLifecyclePreserveBankFactsAndRejectStaleWrites() throws Exception {
+        var auth = httpBasic("developer", "integration-test-password");
+        mvc.perform(put("/api/planning").with(auth).contentType("application/json")
+                .content("{\"openingBalance\":12000}")).andExpect(status().isForbidden());
+        mvc.perform(put("/api/planning").with(auth).with(csrf()).contentType("application/json")
+                .content("{\"openingBalance\":0.001}")).andExpect(status().isBadRequest());
+        mvc.perform(put("/api/planning").with(auth).with(csrf()).contentType("application/json")
+                .content("{\"openingBalance\":12000}")).andExpect(status().isNoContent());
+        assertThat(service.dashboard(30, 0).account()).isNull();
+        assertThat(service.dashboard(30, 0).forecast().openingBalance()).isEqualByComparingTo("12000");
+        service.sync();
+        service.seedDemo();
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        var dashboard = service.dashboard(30, 0);
+        assertThat(dashboard.planningBalance()).isEqualByComparingTo("12000");
+        assertThat(dashboard.account().bookedBalance()).isEqualByComparingTo("12500");
+        assertThat(dashboard.forecast().minimumBalance()).isEqualByComparingTo("-2600");
+        assertThat(store.planningBalance()).isEqualByComparingTo("12000");
+
+        var equipment = findDocument("20003");
+        var delayed = new DocumentInput(equipment.kind(), equipment.counterparty(), equipment.reference(),
+                equipment.amount(), equipment.dueDate(), LocalDate.of(2026, 11, 18));
+        mvc.perform(put("/api/documents/" + equipment.id()).with(auth).with(csrf())
+                .contentType("application/json").content("""
+                {"revision":0,"document":{"kind":"EXPENSE","counterparty":"Equipment supplier","reference":"20003",
+                  "amount":4800,"dueDate":"2026-11-07","expectedDate":"2026-11-18"}}
+                """)).andExpect(status().isNoContent());
+        assertThat(findDocument("20003").expectedDate()).isEqualTo(LocalDate.of(2026, 11, 18));
+        assertThat(findDocument("20003").dueDate()).isEqualTo(equipment.dueDate());
+        assertThat(service.dashboard(30, 0).forecast().minimumBalance()).isEqualByComparingTo("2200");
+        assertThatThrownBy(() -> service.update(equipment.id(), new DocumentUpdate(delayed, 0L)))
+                .hasMessageContaining("another session");
+        mvc.perform(put("/api/documents/" + equipment.id()).with(auth).with(csrf())
+                .contentType("application/json").content("{\"revision\":1,\"document\":null}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/documents/" + UUID.randomUUID() + "/cancel").with(auth).with(csrf())
+                .contentType("application/json").content("{\"revision\":0}")).andExpect(status().isNotFound());
+
+        service.cancel(equipment.id(), new RevisionInput(1L));
+        assertThat(findDocument("20003").cancelled()).isTrue();
+        assertThat(store.documents()).hasSize(6);
+        assertThat(service.dashboard(30, 0).forecast().series().getLast().balance()).isEqualByComparingTo("13100");
+        assertThatThrownBy(() -> service.update(equipment.id(), new DocumentUpdate(delayed, 2L)))
+                .hasMessageContaining("Cancelled");
+        assertThatThrownBy(() -> service.create(new DocumentInput(Kind.EXPENSE, "Reuse", "20003",
+                new BigDecimal("1"), LocalDate.of(2026, 11, 1)))).isInstanceOf(DataIntegrityViolationException.class);
+        var matched = findDocument("10001");
+        assertThatThrownBy(() -> service.cancel(matched.id(), new RevisionInput(0L))).hasMessageContaining("matched payments");
+        assertThatThrownBy(() -> service.update(matched.id(), new DocumentUpdate(
+                new DocumentInput(Kind.INVOICE, matched.counterparty(), "CHANGED", matched.amount(), matched.dueDate()), 0L)))
+                .hasMessageContaining("payment reference cannot");
+        assertThatThrownBy(() -> service.update(matched.id(), new DocumentUpdate(
+                new DocumentInput(Kind.INVOICE, matched.counterparty(), matched.reference(), new BigDecimal("1"), matched.dueDate()), 0L)))
+                .hasMessageContaining("lower than");
+        assertThat(findDocument("10001").paidAmount()).isEqualByComparingTo("3200");
+        assertThat(service.dashboard(30, 0).account().bookedBalance()).isEqualByComparingTo("12500");
+        mvc.perform(put("/api/planning").with(auth).with(csrf()).contentType("application/json")
+                .content("{\"openingBalance\":null}")).andExpect(status().isNoContent());
+        assertThat(service.dashboard(30, 0).planningBalance()).isNull();
+        assertThat(service.dashboard(30, 0).forecast().openingBalance()).isEqualByComparingTo("12500");
+        service.setPlanningBalance(new PlanningInput(BigDecimal.ZERO));
+        assertThat(service.dashboard(30, 0).forecast().openingBalance()).isEqualByComparingTo("0");
+        service.setPlanningBalance(new PlanningInput(new BigDecimal("-0.01")));
+        assertThat(service.dashboard(30, 0).forecast().firstShortfall()).isEqualTo(LocalDate.of(2026, 10, 29));
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        assertThat(findDocument("20003").cancelled()).isTrue();
+    }
+
+    @Test
+    void lifecycleGuardsReconcileUnprocessedPaymentsAndSkipCancelledReferences() {
+        service.sync();
+        service.seedDemo();
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        var equipment = findDocument("20003");
+        service.cancel(equipment.id(), new RevisionInput(0L));
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+
+        // Persist bank facts without delivering an event, modelling a lagging consumer.
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.jdbc().update("""
+                    INSERT INTO bank_transaction VALUES
+                    ('DEMO-FI-EUR','late-equipment','2026-10-29',-100,'20003','Equipment supplier'),
+                    ('DEMO-FI-EUR','queued-salary','2026-10-29',-40,'20002','Team salaries')
+                    """);
+        });
+        var salaries = findDocument("20002");
+        assertThat(salaries.paidAmount()).isEqualByComparingTo("0");
+        assertThatThrownBy(() -> service.cancel(salaries.id(), new RevisionInput(0L)))
+                .hasMessageContaining("matched payments");
+        assertThat(findDocument("20002").cancelled()).isFalse();
+        service.update(salaries.id(), new DocumentUpdate(new DocumentInput(salaries.kind(),
+                salaries.counterparty(), salaries.reference(), salaries.amount(), salaries.dueDate(),
+                salaries.dueDate().plusDays(1)), 0L));
+        assertThat(findDocument("20002").paidAmount()).isEqualByComparingTo("40");
+        assertThat(store.transactions().stream().filter(transaction -> transaction.externalId().equals("late-equipment"))
+                .findFirst().orElseThrow().documentId()).isNull();
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        assertThat(findDocument("20003").cancelled()).isTrue();
+    }
+
+    Document findDocument(String reference) {
+        return store.documents().stream().filter(document -> document.reference().equals(reference)).findFirst().orElseThrow();
     }
 }

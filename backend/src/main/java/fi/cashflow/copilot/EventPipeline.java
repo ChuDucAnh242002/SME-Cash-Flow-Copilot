@@ -70,7 +70,8 @@ public class EventPipeline {
     public void consume(ConsumerRecord<String, String> record) throws JsonProcessingException {
         FinanceEvent event = mapper.readValue(record.value(), FinanceEvent.class);
         if (event.id() == null || event.schemaVersion() != 1
-                || !Set.of("BANK_SYNCED", "DOCUMENT_CREATED", "DEMO_LOADED").contains(event.type())) {
+                || !Set.of("BANK_SYNCED", "DOCUMENT_CREATED", "DOCUMENT_UPDATED", "DOCUMENT_CANCELLED",
+                        "DEMO_LOADED").contains(event.type())) {
             throw new IllegalArgumentException("Unsupported finance event schema");
         }
         tx.executeWithoutResult(status -> {

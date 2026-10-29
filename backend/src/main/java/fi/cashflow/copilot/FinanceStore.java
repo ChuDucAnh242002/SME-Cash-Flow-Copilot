@@ -23,7 +23,28 @@ public class FinanceStore {
                 GROUP BY d.id ORDER BY d.due_date, d.created_at, d.id
                 """, (rs, row) -> new Document(rs.getObject("id", UUID.class), Kind.valueOf(rs.getString("kind")),
                 rs.getString("counterparty"), rs.getString("reference"), rs.getBigDecimal("amount"),
-                rs.getObject("due_date", LocalDate.class), rs.getBigDecimal("paid_amount")));
+                rs.getObject("due_date", LocalDate.class), rs.getBigDecimal("paid_amount"),
+                rs.getObject("expected_date", LocalDate.class), rs.getBoolean("cancelled"), rs.getLong("revision")));
+    }
+
+    public BigDecimal planningBalance() {
+        return jdbc.queryForObject("SELECT planning_balance FROM workspace WHERE id=1", BigDecimal.class);
+    }
+
+    public void setPlanningBalance(BigDecimal balance) {
+        jdbc.update("UPDATE workspace SET planning_balance=? WHERE id=1", balance);
+    }
+
+    public void updateDocument(UUID id, DocumentInput input) {
+        jdbc.update("""
+                UPDATE document SET kind=?,counterparty=?,reference=?,normalized_reference=?,amount=?,due_date=?,
+                  expected_date=?,revision=revision+1 WHERE id=?
+                """, input.kind().name(), input.counterparty().strip(), input.reference().strip(),
+                normalizeReference(input.reference()), input.amount(), input.dueDate(), input.expectedDate(), id);
+    }
+
+    public void cancelDocument(UUID id) {
+        jdbc.update("UPDATE document SET cancelled=true,revision=revision+1 WHERE id=?", id);
     }
 
     public List<BankTransaction> transactions() {
@@ -57,10 +78,10 @@ public class FinanceStore {
 
     public void insertDocument(DocumentInput input) {
         jdbc.update("""
-                INSERT INTO document(id,kind,counterparty,reference,normalized_reference,amount,due_date)
-                VALUES (?,?,?,?,?,?,?)
+                INSERT INTO document(id,kind,counterparty,reference,normalized_reference,amount,due_date,expected_date)
+                VALUES (?,?,?,?,?,?,?,?)
                 """, UUID.randomUUID(), input.kind().name(), input.counterparty().strip(), input.reference().strip(),
-                normalizeReference(input.reference()), input.amount(), input.dueDate());
+                normalizeReference(input.reference()), input.amount(), input.dueDate(), input.expectedDate());
     }
 
     public void enqueue(String type) {
@@ -105,7 +126,9 @@ public class FinanceStore {
         // Rebuild deterministically so invoices entered after a sync can match historical receipts.
         jdbc.update("DELETE FROM allocation");
         Map<String, Document> byReference = new HashMap<>();
-        for (Document document : documents()) byReference.put(normalizeReference(document.reference()), document);
+        for (Document document : documents()) {
+            if (!document.cancelled()) byReference.put(normalizeReference(document.reference()), document);
+        }
         Map<UUID, BigDecimal> allocated = new HashMap<>();
         for (BankTransaction transaction : transactions()) {
             Document document = byReference.get(normalizeReference(transaction.reference()));

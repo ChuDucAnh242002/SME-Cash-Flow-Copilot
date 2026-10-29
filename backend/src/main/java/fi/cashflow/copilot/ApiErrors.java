@@ -19,6 +19,11 @@ public class ApiErrors {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, exception.getMessage());
     }
 
+    @ExceptionHandler(FinanceService.DocumentNotFoundException.class)
+    ProblemDetail missing(FinanceService.DocumentNotFoundException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+    }
+
     @ExceptionHandler({IllegalStateException.class, FinanceService.SyncBusyException.class})
     ProblemDetail conflict(RuntimeException exception) {
         log.warn("Request conflict: {}", exception.getMessage());

@@ -3,6 +3,7 @@ package fi.cashflow.copilot;
 import static fi.cashflow.copilot.Models.*;
 import java.math.BigDecimal;
 import java.time.*;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -38,11 +39,66 @@ public class FinanceService implements ApplicationRunner {
             // Same lock as writes: documents, allocations and balance form a consistent snapshot.
             store.lock();
             Account account = store.account();
+            BigDecimal planning = store.planningBalance();
             var documents = store.documents();
-            return new Dashboard(store.status(), account, documents, store.transactions(),
-                    engine.forecast(account == null ? BigDecimal.ZERO : account.bookedBalance(),
+            return new Dashboard(store.status(), account, planning, documents, store.transactions(),
+                    engine.forecast(planning != null ? planning : account == null ? BigDecimal.ZERO : account.bookedBalance(),
                             documents, LocalDate.now(clock), days, delay));
         });
+    }
+
+    public void setPlanningBalance(PlanningInput input) {
+        tx.executeWithoutResult(status -> { store.lock(); store.setPlanningBalance(input.openingBalance()); });
+    }
+
+    public void update(UUID id, DocumentUpdate update) {
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            // Reconcile inside the lock before checking paid amounts, even if Kafka is behind.
+            store.reconcile();
+            Document current = editableDocument(id, update.revision());
+            DocumentInput input = update.document();
+            if (current.paidAmount().signum() > 0) {
+                if (input.kind() != current.kind()
+                        || !normalizeReference(input.reference()).equals(normalizeReference(current.reference()))) {
+                    throw new IllegalStateException("A matched document's type and payment reference cannot be changed.");
+                }
+                if (input.amount().compareTo(current.paidAmount()) < 0) {
+                    throw new IllegalStateException("Amount cannot be lower than the payments already matched to this document.");
+                }
+            }
+            store.updateDocument(id, input);
+            store.reconcile();
+            store.enqueue("DOCUMENT_UPDATED");
+        });
+    }
+
+    public void cancel(UUID id, RevisionInput input) {
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.reconcile();
+            Document current = editableDocument(id, input.revision());
+            if (current.paidAmount().signum() > 0) {
+                throw new IllegalStateException("A document with matched payments cannot be cancelled. Review its payments first.");
+            }
+            store.cancelDocument(id);
+            store.reconcile();
+            store.enqueue("DOCUMENT_CANCELLED");
+        });
+    }
+
+    private Document editableDocument(UUID id, long revision) {
+        Document current = store.documents().stream().filter(document -> document.id().equals(id)).findFirst()
+                .orElseThrow(DocumentNotFoundException::new);
+        if (current.cancelled()) throw new IllegalStateException("Cancelled documents cannot be changed.");
+        if (current.revision() != revision) {
+            throw new IllegalStateException("This document changed in another session. Close the form, refresh and reopen it.");
+        }
+        return current;
+    }
+
+    public static class DocumentNotFoundException extends RuntimeException {
+        public DocumentNotFoundException() { super("Document not found."); }
     }
 
     public void create(DocumentInput input) {
