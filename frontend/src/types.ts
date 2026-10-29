@@ -19,6 +19,33 @@ export interface Transaction {
   reference: string;
   counterparty: string;
   documentId: string | null;
+  matchMode: "AUTO" | "MANUAL" | "EXCLUDED";
+  reviewRevision: number;
+  explanation:
+    | "MATCHED_AUTOMATICALLY"
+    | "MATCHED_MANUALLY"
+    | "EXCLUDED_BY_USER"
+    | "MISSING_REFERENCE"
+    | "UNKNOWN_REFERENCE"
+    | "CANCELLED_DOCUMENT"
+    | "DIRECTION_MISMATCH"
+    | "EXCESS_AMOUNT"
+    | "ZERO_AMOUNT"
+    | "RECONCILIATION_PENDING";
+}
+export type ReviewAction = "LINK" | "UNLINK" | "RESUME";
+export interface PaymentReviewAudit {
+  id: number;
+  action: ReviewAction;
+  previousMode: Transaction["matchMode"];
+  previousDocumentId: string | null;
+  previousDocumentLabel: string | null;
+  nextMode: Transaction["matchMode"];
+  nextDocumentId: string | null;
+  nextDocumentLabel: string | null;
+  reason: string;
+  actor: string;
+  occurredAt: string;
 }
 export interface ForecastDay {
   date: string;

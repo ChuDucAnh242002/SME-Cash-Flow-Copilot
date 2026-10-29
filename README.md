@@ -238,6 +238,60 @@ To stop without losing statement data:
 docker compose -p sme-cashflow-statements -f compose.yaml -f compose.statement.yaml down
 ```
 
+## Payment reconciliation review
+
+Open **Bank transactions** (or **Statement transactions**) and select **Review**.
+Each transaction explains its state: automatic/manual match, missing or unknown
+reference, cancelled document, direction mismatch, excess amount, zero amount,
+pending reconciliation, or an explicit user decision to keep it unmatched.
+An excess amount means the **whole payment** exceeds the current unpaid portion,
+including amounts reserved by other payments. References are normalized as before.
+
+### Supported corrections
+
+- **Link payment:** choose one active invoice for an incoming payment, or one
+  active expense for an outgoing payment. Only documents with enough unpaid amount
+  are offered. The full payment is allocated; a smaller payment partially settles
+  the document. Manual linking may override a missing/different bank reference,
+  but never changes the imported transaction's reference, amount or date.
+- **Remove match:** requires a reason and explicit confirmation. The document's
+  paid amount is recalculated. The payment is kept **unmatched by your decision**,
+  not silently rematched during the next sync, statement import, document edit or
+  Kafka replay. This works for both automatic and manual matches.
+- **Resume automatic matching:** explicitly releases that hold and immediately
+  reruns reference matching. A match is not guaranteed. To move a currently matched
+  payment to another document, remove its existing match first, then link it.
+
+Every correction requires a nonblank reason (at most 500 characters), a preview
+and confirmation. **Payment review history** records action, previous/next mode,
+previous/next document ID and label snapshot, signed-in username and timestamp.
+The actor comes from authentication, not the request body. History is append-only
+through the application API, not a tamper-proof regulatory audit log; a database
+administrator still controls stored data. Automatic matches are derived and do not
+create manual audit entries. Historical labels remain as recorded if a document's
+name is edited later.
+
+Corrections reconcile synchronously under the same workspace lock used by imports
+and document edits. Manual decisions reserve their document amounts before automatic
+matching and survive replay and restarts. A payment revision changes when its
+decision or allocated document changes; stale reviews receive HTTP 409 and must be
+closed/reopened after refreshing. The dashboard also disables a review when polling
+detects that its payment changed. Available amounts are checked again at confirmation,
+so two sessions cannot over-allocate a document.
+
+Correction, resulting allocations, audit entry and `PAYMENT_REVIEWED` outbox event
+are saved in one transaction. Duplicate event delivery does not repeat the audit
+entry. Existing matched-document edit/cancellation safeguards also apply to manual
+payments. Forecasts use recalculated **unpaid portions**; balances and historical
+transactions are never added again or changed by review.
+
+**Limits:** one whole payment per document allocation; multiple payments may settle
+one document. Payment splitting, overpayments, refunds/reversals and deleting
+financial facts are not supported. An explicit unmatched hold can increase the
+forecast's unpaid receipts/expenses: review these assumptions before relying on it.
+Automatic matching still runs asynchronously for ordinary imports/document creation;
+wait for pending events to reach zero before trusting totals.
+
 ## Architecture
 
 ```mermaid
@@ -339,6 +393,9 @@ empty continuation pages, repeated cursors, currency errors and token expiry.
 Statement tests cover strict UTF-8/CSV limits, read-only previews, duplicate/conflict
 handling, source/account isolation, stale confirmations, signed amounts, CSRF,
 partial matching and exact forecasts without double-counting historical payments.
+Payment-review tests cover reason codes, authenticated audit attribution, manual
+priority, unlink/resume, stale and competing corrections, over-allocation prevention,
+Kafka replay and protected document edits.
 The integration test uses **real PostgreSQL via Testcontainers and embedded Kafka**,
 covering persistence, duplicate syncs, event redelivery, full/partial reconciliation,
 forecast amounts, planning overrides, expected dates, cancellation, stale-write and
@@ -442,6 +499,8 @@ and session cookie obtained from `GET /api/csrf`.
 | POST | `/api/documents/import` | Multipart `file` CSV import |
 | POST | `/api/statements/preview` | Statement-only read-only preview; multipart `file`, `accountId`, `accountName`, `closingBalance`, `closingDate` |
 | POST | `/api/statements/import` | Same multipart fields plus preview `revision`; atomically import and update closing balance |
+| POST | `/api/reconciliation/decisions` | `{accountId, transactionId, action, documentId?, revision, reason}`; action `LINK`, `UNLINK` or `RESUME` |
+| GET | `/api/reconciliation/history?accountId=...&transactionId=...` | Manual correction history, newest first; URL-encode identifiers |
 | POST | `/api/bank/sync` | Manual read-only sync (disabled in statement mode) |
 | POST | `/api/demo/seed` | Load documents into an empty demo workspace only |
 | GET | `/api/csrf` | Session-bound write token |
@@ -455,6 +514,12 @@ Migration V3 adds statement closing-date/import-revision metadata and permits
 statement mode in the workspace constraint. Existing workspace modes, account facts,
 documents and allocations are preserved; changing a populated workspace's mode remains forbidden.
 The dashboard's `status.statementDate` is nullable outside confirmed statement imports.
+Migration V4 adds persistent review decisions and append-only application audit history.
+Existing allocations are preserved; payments without a decision default to automatic
+matching. Dashboard transactions now include `matchMode` (`AUTO`, `MANUAL`, `EXCLUDED`),
+`reviewRevision` and an `explanation` code. A decision needs the current payment revision;
+`documentId` is required only for `LINK`, and must be omitted/null for `UNLINK`/`RESUME`.
+Unknown payments/history queries return HTTP 404. Bank account balances are unchanged.
 
 Validation errors return HTTP 400, conflicts 409 and bank integration failures 502,
 using problem details. Browser/server errors never turn into a successful empty bank sync.

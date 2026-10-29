@@ -6,7 +6,11 @@ export default defineConfig({
   testMatch:
     process.env.STATEMENT_E2E === "1"
       ? "**/statements.spec.ts"
-      : ["**/dashboard.spec.ts", "**/planning.spec.ts"],
+      : [
+          "**/dashboard.spec.ts",
+          "**/planning.spec.ts",
+          "**/reconciliation.spec.ts",
+        ],
   use: {
     baseURL: process.env.APP_URL ?? "http://127.0.0.1:8080",
     httpCredentials: {

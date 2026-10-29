@@ -7,6 +7,54 @@
   font-size: 14px;
   line-height: 1.5;
 }
+.payment-review {
+  padding: 24px;
+  border-top: 1px solid #d2dcd6;
+  border-bottom: 1px solid #d2dcd6;
+}
+.payment-review p,
+.payment-review h4 {
+  margin-bottom: 12px;
+}
+.payment-review fieldset {
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.payment-review label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.payment-review select,
+.payment-review textarea {
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d2dcd6;
+  border-radius: 7px;
+  padding: 10px;
+  background: white;
+  color: #23483f;
+}
+.payment-review textarea {
+  resize: vertical;
+  outline-offset: 4px;
+}
+.payment-review,
+.review-history {
+  overflow-wrap: anywhere;
+}
+.review-history {
+  padding-left: 20px;
+}
+.review-history li {
+  margin-bottom: 16px;
+}
 .statement-panel {
   padding: 26px;
   margin-bottom: 24px;

@@ -3,10 +3,12 @@ import { createRoot } from "react-dom/client";
 import { request } from "./api";
 import { ForecastChart } from "./ForecastChart";
 import { date, documentState, localToday, money } from "./format";
-import type { Dashboard, Document } from "./types";
+import type { Dashboard, Document, Transaction } from "./types";
 import { DocumentForm } from "./DocumentForm";
 import { PlanningPanel } from "./PlanningPanel";
 import { StatementPanel } from "./StatementPanel";
+import { PaymentReviewPanel } from "./PaymentReviewPanel";
+import { matchExplanation } from "./reconciliation";
 import "./style.css";
 
 function App() {
@@ -21,6 +23,7 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Document | null>(null);
   const [cancelling, setCancelling] = useState<Document | null>(null);
+  const [reviewing, setReviewing] = useState<Transaction | null>(null);
   const generation = useRef(0);
 
   const reload = useCallback(async () => {
@@ -512,6 +515,31 @@ function App() {
                   </button>
                 </div>
               )}
+              {reviewing && (
+                <PaymentReviewPanel
+                  key={JSON.stringify([
+                    reviewing.accountId,
+                    reviewing.externalId,
+                  ])}
+                  transaction={reviewing}
+                  current={data.transactions.find(
+                    (transaction) =>
+                      transaction.accountId === reviewing.accountId &&
+                      transaction.externalId === reviewing.externalId,
+                  )}
+                  documents={data.documents}
+                  busy={busy}
+                  onBusyChange={setBusy}
+                  onClose={() => setReviewing(null)}
+                  onSaved={async () => {
+                    setReviewing(null);
+                    setNotice(
+                      "Payment correction saved. Review history recorded; bank and statement facts are unchanged.",
+                    );
+                    await reload();
+                  }}
+                />
+              )}
               <div className="activity-toolbar">
                 <div className="tabs" role="tablist" aria-label="Activity type">
                   <button
@@ -674,6 +702,7 @@ function App() {
                         <th>Booked</th>
                         <th>Amount</th>
                         <th>Reconciliation</th>
+                        <th>Review details</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -695,11 +724,22 @@ function App() {
                               {tx.documentId ? "Matched" : "Needs review"}
                             </span>
                           </td>
+                          <td>
+                            <small>{matchExplanation[tx.explanation]}</small>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              aria-label={`Review payment ${tx.externalId}`}
+                              onClick={() => setReviewing(tx)}
+                            >
+                              Review
+                            </button>
+                          </td>
                         </tr>
                       ))}
                       {data.transactions.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="empty">
+                          <td colSpan={6} className="empty">
                             {statement
                               ? "No statement transactions. Preview and import a CSV above."
                               : "No bank transactions. Sync your account to import them."}
@@ -713,7 +753,8 @@ function App() {
               <div className="table-note">
                 Matches use payment reference, direction and remaining amount.
                 Partial payments are supported; ambiguous or excessive payments
-                stay unmatched.
+                stay unmatched. Manual links are protected. Removed matches stay
+                unmatched until you explicitly resume automatic matching.
               </div>
             </section>
             <details className="panel forecast-detail" id="forecast-detail">
