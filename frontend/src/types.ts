@@ -7,6 +7,9 @@ export interface Document {
   amount: number;
   dueDate: string;
   paidAmount: number;
+  expectedDate: string | null;
+  cancelled: boolean;
+  revision: number;
 }
 export interface Transaction {
   accountId: string;
@@ -39,6 +42,7 @@ export interface Dashboard {
     observedAt: string;
   } | null;
   documents: Document[];
+  planningBalance: number | null;
   transactions: Transaction[];
   forecast: {
     days: number;

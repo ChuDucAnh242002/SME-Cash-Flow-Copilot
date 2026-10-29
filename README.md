@@ -5,19 +5,21 @@ React / TypeScript, PostgreSQL, Kafka, Docker Compose and Kubernetes.
 
 **Independent prototype, not a Nordea product. No real money moves.**
 
-## What v0.1 does
+## What the planning preview does
 
 - Import a bank snapshot and deduplicate transactions.
 - Enter customer invoices and planned expenses, or import a CSV atomically.
 - Reconcile by unique payment reference and direction, including partial payments.
 - Forecast 30, 60 or 90 days with an optional 7/14/30-day customer payment delay.
+- Save a clearly labelled planning opening balance without changing bank facts.
+- Edit documents and expected payment dates, flag overdue items and cancel unpaid plans.
 - Show an explainable shortfall alert, daily movements, source freshness and processing failures.
 - Persist financial state in PostgreSQL and process reconciliation asynchronously through Kafka.
 - Run immediately with labelled demo data, or configure Nordea's Finnish Instant Reporting sandbox.
 
 Single workspace, one Finnish EUR account, one owner login. No automatic tax calculation,
 payment initiation, recurring-expense inference, generative AI, multi-tenancy or production banking.
-Documents cannot yet be edited/deleted through the UI; use unique references and check imports carefully.
+Cancelled documents remain visible; deletion and reversal of matched payments are not supported.
 
 ## Run locally
 
@@ -54,6 +56,57 @@ credentials publicly. Volumes persist across `docker compose down`; restart with
 docker compose down
 ```
 
+### Planning scenarios and document changes
+
+Set **Planning opening balance / EUR** and click **Save planning balance** to explore
+a realistic SME scenario, even when Nordea's sandbox balance is huge. The override:
+
+- Is saved in PostgreSQL for the workspace and survives reloads, restarts and bank syncs.
+- Is visibly labelled **Planning scenario / not a bank balance**.
+- Does not change the bank-reported balance, transactions or payment matches.
+- Works without a bank connection. Zero and negative opening amounts are valid.
+- Can be removed with **Use bank balance** (or **Clear planning balance** if unsynced).
+
+Without either a bank snapshot or an override, the UI does not present the computed
+zero-based series as a usable forecast. Setting an override does not synthesize transactions.
+Forecasts still use actual matched payments to calculate unpaid document portions.
+
+Use **Edit** on a document to change its details. **Expected payment date** is optional:
+the forecast uses that date instead of the due date, then applies the customer-delay
+scenario to invoices only. Clearing it restores the due-date assumption. The contractual
+due date is preserved, so an unpaid item can remain **Overdue** even with a later expected
+date. Document edits are saved workspace-wide, not as multiple independent scenario copies.
+
+Cancellation requires confirmation, is irreversible in this preview, excludes the item
+from forecasts/totals and retains it in the document list. Cancelled references cannot
+be reused, and cancelled items never match future bank transactions. Documents with
+matched payments cannot be cancelled; their type/reference are locked and their amount
+cannot be reduced below matched payments. You can still update dates or increase the
+amount, preserving existing matches. Corrections involving refunds/reversals need a
+future accounting-review workflow.
+
+Edits/cancellation include a revision check. Stale forms receive HTTP 409 instead of
+overwriting another session's changes. Close and reopen the form after refreshing.
+Reconciliation runs synchronously under the workspace lock before and after lifecycle
+changes, so guards also work when Kafka is behind. The same transaction appends an
+outbox event; Kafka consumers can replay it idempotently.
+
+#### Try a realistic cash squeeze
+
+In an empty planning workspace, set an opening balance of **EUR 12,000**, then add:
+
+| Kind | Description | Amount | Due |
+|---|---|---:|---|
+| Expense | Salaries | 9,800 | Today + 5 days |
+| Expense | Equipment | 4,800 | Today + 9 days |
+| Invoice | Customer project | 8,500 | Today + 14 days |
+
+The minimum becomes **EUR -2,600** on day 9. Edit Equipment's **expected payment date**
+to day 20; the minimum becomes **EUR 2,200**. With the customer delay set to seven days,
+the shortfall returns because the receipt moves to day 21. These are hypothetical
+plans, not bank data or a recommendation to delay contractual payments.
+Do not load sample documents over a business's actual plans; use a separate workspace.
+
 ### CSV import
 
 See [examples/documents.csv](examples/documents.csv). Exact header:
@@ -67,7 +120,9 @@ EXPENSE,Example Supplier Oy,40001,800.00,2026-11-10
 UTF-8 RFC4180; at most 200 rows / 256 KB. Positive EUR amounts with at most two
 decimal places; ISO dates. Past due dates are allowed. A reference must be unique
 across both document types after whitespace removal and uppercasing. The entire
-import rolls back on any duplicate or invalid row.
+import rolls back on any duplicate or invalid row, including a reference retained by a
+cancelled document. The five-column CSV contract is unchanged; set optional expected
+payment dates through Edit after import.
 
 ## Nordea sandbox setup
 
@@ -75,9 +130,9 @@ See [the sandbox integration guide](docs/nordea-sandbox.md).
 
 The application does not ask you to paste secrets into the UI, source code or chat.
 It reads ignored local files on each sync, so you can replace an expired access token
-without rebuilding. **No authenticated call to Nordea has been verified with your
-credentials yet**; contract tests exercise signing, parsing, pagination and upstream
-errors against a local HTTP server.
+without rebuilding. Automated tests use a local HTTP server for authentication-header,
+parsing, pagination and upstream-error cases; a user's first authenticated sandbox sync
+remains an onboarding verification step.
 
 Demo and Nordea modes cannot share a populated database. To preserve your demo while
 starting an independent sandbox workspace:
@@ -127,8 +182,9 @@ flowchart LR
   Consumer failures retry without silently discarding an event.
 
 Forecasting uses exact decimal arithmetic in Java, with a daily end-of-day model.
-The minimum includes the opening balance. Only unpaid document portions are future
-movements; receipts are delayed in scenarios, expenses are not. Overdue items land
+The minimum includes the chosen opening balance. Only unpaid active document portions
+are future movements. Expected payment dates override due dates for scheduling;
+receipts are additionally delayed in scenarios, expenses are not. Past movements land
 today. Unentered expenses and uncertain customer payment behaviour are not predicted.
 Dates use Europe/Helsinki.
 
@@ -191,7 +247,8 @@ Backend tests include exact forecast thresholds, CSV validation, HTTP signing,
 empty continuation pages, repeated cursors, currency errors and token expiry.
 The integration test uses **real PostgreSQL via Testcontainers and embedded Kafka**,
 covering persistence, duplicate syncs, event redelivery, full/partial reconciliation,
-forecast amounts, authentication, CSRF and validation. Docker must be available;
+forecast amounts, planning overrides, expected dates, cancellation, stale-write and
+matched-payment guards, authentication, CSRF and validation. Docker must be available;
 the integration class explicitly skips when it is not. Unit tests still run during
 the application image build.
 
@@ -223,13 +280,18 @@ It loads the demo if the workspace is empty, verifies duplicate-sync safety, wai
 for Kafka reconciliation, and checks exact forecast results. Use a fresh demo
 workspace without additional documents. It does not erase existing data.
 
-Browser regression tests exercise the running demo stack at desktop and mobile
-sizes, including sync, payment-delay scenarios, document validation and CSV errors:
+Browser regression tests exercise a dedicated, seeded demo stack at desktop and mobile
+sizes, including sync, payment-delay scenarios, document validation, CSV errors, saved
+planning balances, rescheduling, overdue indicators and cancellation. Run the smoke test
+first to seed a fresh demo workspace. Browser tests retain their cancelled test document;
+do not point them at your Nordea workspace or a demo containing plans you want to keep.
 
 ```sh
 cd frontend
 npx playwright install chromium
 npm run test:e2e
+# If the dedicated demo stack uses another port:
+APP_URL=http://127.0.0.1:8081 npm run test:e2e
 ```
 
 Screenshots and failure traces are written to the ignored `frontend/test-results`.
@@ -269,10 +331,19 @@ and session cookie obtained from `GET /api/csrf`.
 |---|---|---|
 | GET | `/api/dashboard?days=30&incomeDelayDays=0` | Snapshot, documents, transactions and daily forecast |
 | POST | `/api/documents` | Create invoice/expense |
+| PUT | `/api/documents/{id}` | Edit using `{document: {...}, revision: n}` |
+| POST | `/api/documents/{id}/cancel` | Cancel using `{revision: n}` |
+| PUT | `/api/planning` | Save `{openingBalance: amount}`; `null` clears override |
 | POST | `/api/documents/import` | Multipart `file` CSV import |
 | POST | `/api/bank/sync` | Manual read-only sync |
 | POST | `/api/demo/seed` | Load documents into an empty demo workspace only |
 | GET | `/api/csrf` | Session-bound write token |
+
+Document input accepts nullable `expectedDate` alongside `dueDate`. Dashboard documents
+include `expectedDate`, `cancelled` and `revision`; top-level `planningBalance` is nullable.
+Revision increments on edits/cancellation, not on reconciliation. Unknown document IDs
+return HTTP 404. Schema migration V2 adds these fields without changing existing records,
+balances or allocations. Back up the database before upgrading.
 
 Validation errors return HTTP 400, conflicts 409 and bank integration failures 502,
 using problem details. Browser/server errors never turn into a successful empty bank sync.

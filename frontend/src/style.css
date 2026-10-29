@@ -246,6 +246,66 @@ main {
   background: #a6c76b;
   margin-right: 7px;
 }
+.planning-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px;
+  margin-bottom: 24px;
+  border-color: #b6cba8;
+}
+.planning-panel p:not(.eyebrow) {
+  color: #687962;
+  font-size: 12px;
+  margin-top: 10px;
+  max-width: 470px;
+}
+.planning-panel form {
+  min-width: 250px;
+}
+.planning-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.planning-actions,
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.planning-actions {
+  margin-top: 12px;
+}
+.row-actions button {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.cancel-confirmation {
+  padding: 18px 24px;
+  background: #fff3e8;
+  border-block: 1px solid #eddbc8;
+}
+.cancel-confirmation p {
+  margin-bottom: 12px;
+}
+.cancel-confirmation button {
+  margin-right: 10px;
+}
+.document-form .form-note {
+  grid-column: 1/-1;
+  font-size: 12px;
+  color: #687962;
+}
+.status-pill.cancelled {
+  color: #68716d;
+  background: #e9ece9;
+}
+.status-pill.overdue {
+  color: #a63e2c;
+  background: #fff0e8;
+}
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -679,6 +739,9 @@ td small {
   }
 }
 @media (max-width: 900px) {
+  .planning-panel {
+    flex-direction: column;
+  }
   .sidebar {
     width: 76px;
     padding: 28px 14px;
@@ -748,6 +811,12 @@ td small {
   }
 }
 @media (max-width: 580px) {
+  .planning-panel {
+    padding: 18px;
+  }
+  .planning-panel form {
+    min-width: 0;
+  }
   main {
     padding: 0 15px;
     margin-left: 0;

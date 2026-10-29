@@ -3,7 +3,9 @@ import { createRoot } from "react-dom/client";
 import { request } from "./api";
 import { ForecastChart } from "./ForecastChart";
 import { date, documentState, localToday, money } from "./format";
-import type { Dashboard, Kind } from "./types";
+import type { Dashboard, Document } from "./types";
+import { DocumentForm } from "./DocumentForm";
+import { PlanningPanel } from "./PlanningPanel";
 import "./style.css";
 
 function App() {
@@ -11,14 +13,14 @@ function App() {
   const [days, setDays] = useState(30);
   const [delay, setDelay] = useState(0);
   const [tab, setTab] = useState<"documents" | "transactions">("documents");
-  const [kind, setKind] = useState<Kind>("INVOICE");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Document | null>(null);
+  const [cancelling, setCancelling] = useState<Document | null>(null);
   const generation = useRef(0);
-  const formRef = useRef<HTMLFormElement>(null);
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -69,7 +71,9 @@ function App() {
   }
 
   const open =
-    data?.documents.filter((doc) => doc.paidAmount < doc.amount) ?? [];
+    data?.documents.filter(
+      (doc) => !doc.cancelled && doc.paidAmount < doc.amount,
+    ) ?? [];
   const receivables = open
     .filter((doc) => doc.kind === "INVOICE")
     .reduce((sum, doc) => sum + doc.amount - doc.paidAmount, 0);
@@ -80,6 +84,9 @@ function App() {
     data?.status.lastSync &&
     Date.now() - new Date(data.status.lastSync).getTime() > 15 * 60 * 1000;
   const demo = data?.status.mode === "demo";
+  const planning =
+    data?.planningBalance !== null && data?.planningBalance !== undefined;
+  const hasOpeningBalance = !!data?.account || planning;
 
   return (
     <div className="layout">
@@ -199,9 +206,25 @@ function App() {
                 Start with <strong>Sync bank account</strong>.{" "}
                 {demo
                   ? "Then load the demo scenario below, or enter your own invoices."
-                  : "Configure your local sandbox credentials before syncing."}
+                  : "Configure your local sandbox credentials before syncing, or set a planning balance below."}
               </div>
             )}
+            <PlanningPanel
+              balance={data.planningBalance}
+              hasBank={!!data.account}
+              busy={busy}
+              onSave={(balance) =>
+                void action(
+                  () =>
+                    request("/api/planning", "PUT", {
+                      openingBalance: balance,
+                    }),
+                  balance === null
+                    ? "Planning override cleared. Forecast uses the bank balance when available."
+                    : "Planning scenario saved. The bank-reported balance is unchanged.",
+                )
+              }
+            />
             {demo && data.documents.length === 0 && (
               <div className="welcome-panel">
                 <div>
@@ -253,13 +276,18 @@ function App() {
                 </small>
               </article>
               <article
-                className={`metric ${data.forecast.minimumBalance < 0 && data.account ? "risk" : ""}`}
+                className={`metric ${data.forecast.minimumBalance < 0 && hasOpeningBalance ? "risk" : ""}`}
               >
                 <span>Lowest projected balance</span>
                 <strong>
-                  {data.account ? money(data.forecast.minimumBalance) : "--"}
+                  {hasOpeningBalance
+                    ? money(data.forecast.minimumBalance)
+                    : "--"}
                 </strong>
-                <small>{days}-day outlook / including opening balance</small>
+                <small>
+                  {days}-day outlook /{" "}
+                  {planning ? "PLANNING SCENARIO" : "bank-based"}
+                </small>
               </article>
             </section>
             <section className="forecast-grid">
@@ -268,6 +296,13 @@ function App() {
                   <div>
                     <p className="eyebrow">LOOK AHEAD</p>
                     <h2>Cash-flow forecast</h2>
+                    <small>
+                      {planning ? "Planning scenario" : "Bank-based forecast"} /
+                      opening{" "}
+                      {hasOpeningBalance
+                        ? money(data.forecast.openingBalance)
+                        : "not set"}
+                    </small>
                   </div>
                   <label className="select-label">
                     Horizon
@@ -301,14 +336,15 @@ function App() {
                     </select>
                   </label>
                 </div>
-                {data.account ? (
+                {hasOpeningBalance ? (
                   <ForecastChart
                     series={data.forecast.series}
                     opening={data.forecast.openingBalance}
                   />
                 ) : (
                   <div className="chart-placeholder">
-                    Connect a bank snapshot to see your forecast.
+                    Sync a bank snapshot or set a planning balance to see your
+                    forecast.
                   </div>
                 )}
                 <div className="chart-footer">
@@ -317,22 +353,24 @@ function App() {
                 </div>
               </article>
               <aside
-                className={`insight ${data.forecast.firstShortfall && data.account ? "warning" : ""}`}
+                className={`insight ${data.forecast.firstShortfall && hasOpeningBalance ? "warning" : ""}`}
               >
                 <p className="eyebrow">YOUR NEXT MOVE</p>
                 <span className="insight-symbol" aria-hidden="true">
-                  {data.forecast.firstShortfall && data.account ? "!" : "+"}
+                  {data.forecast.firstShortfall && hasOpeningBalance
+                    ? "!"
+                    : "+"}
                 </span>
                 <h2>
-                  {!data.account
+                  {!hasOpeningBalance
                     ? "Start with the facts."
                     : data.forecast.firstShortfall
                       ? `A gap ahead on ${date(data.forecast.firstShortfall)}.`
                       : "Room to breathe."}
                 </h2>
                 <p>
-                  {!data.account
-                    ? "Sync an account and add your expected income and expenses to build an explainable outlook."
+                  {!hasOpeningBalance
+                    ? "Sync an account or set a planning balance, then add your expected income and expenses."
                     : data.forecast.firstShortfall
                       ? `Your scenario falls below zero, reaching ${money(data.forecast.minimumBalance)}. Review upcoming receipts and non-critical spending before that date.`
                       : "No negative daily closing balance in this scenario. Late receipts or unrecorded expenses can still change the picture."}
@@ -353,84 +391,72 @@ function App() {
                 <button
                   className="primary"
                   disabled={busy}
-                  onClick={() => setShowForm(!showForm)}
+                  onClick={() => {
+                    setShowForm(!showForm);
+                    setEditing(null);
+                    setCancelling(null);
+                  }}
                 >
                   {showForm ? "Close form" : "+ Add invoice or expense"}
                 </button>
               </div>
               {showForm && (
-                <form
-                  className="document-form"
-                  ref={formRef}
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const fields = new FormData(event.currentTarget);
-                    void action(async () => {
-                      await request("/api/documents", "POST", {
-                        kind,
-                        counterparty: fields.get("counterparty"),
-                        reference: fields.get("reference"),
-                        amount: fields.get("amount"),
-                        dueDate: fields.get("dueDate"),
-                      });
-                      formRef.current?.reset();
-                      setShowForm(false);
-                    }, "Document saved. Kafka reconciliation will update payment matches.");
-                  }}
+                <DocumentForm
+                  key={editing ? `${editing.id}-${editing.revision}` : "new"}
+                  document={editing}
+                  busy={busy}
+                  onSave={(input) =>
+                    void action(
+                      async () => {
+                        if (editing)
+                          await request(`/api/documents/${editing.id}`, "PUT", {
+                            document: input,
+                            revision: editing.revision,
+                          });
+                        else await request("/api/documents", "POST", input);
+                        setShowForm(false);
+                        setEditing(null);
+                      },
+                      editing
+                        ? "Document updated and reconciliation refreshed."
+                        : "Document saved. Kafka reconciliation will update payment matches.",
+                    )
+                  }
+                />
+              )}
+              {cancelling && (
+                <div
+                  className="cancel-confirmation"
+                  role="region"
+                  aria-label="Confirm document cancellation"
                 >
-                  <label>
-                    Type
-                    <select
-                      value={kind}
-                      onChange={(event) => setKind(event.target.value as Kind)}
-                    >
-                      <option value="INVOICE">Customer invoice</option>
-                      <option value="EXPENSE">Planned expense</option>
-                    </select>
-                  </label>
-                  <label>
-                    Customer or supplier
-                    <input
-                      name="counterparty"
-                      required
-                      maxLength={160}
-                      placeholder="Company Oy"
-                    />
-                  </label>
-                  <label>
-                    Payment reference
-                    <input
-                      name="reference"
-                      required
-                      maxLength={80}
-                      placeholder="Unique bank reference"
-                    />
-                  </label>
-                  <label>
-                    Amount / EUR
-                    <input
-                      name="amount"
-                      required
-                      type="number"
-                      min=".01"
-                      max="999999999.99"
-                      step=".01"
-                      placeholder="0.00"
-                    />
-                  </label>
-                  <label>
-                    Due date
-                    <input
-                      name="dueDate"
-                      required
-                      type="date"
-                      defaultValue={localToday()}
-                    />
-                  </label>
-                  <button type="submit" className="primary" disabled={busy}>
-                    Save document
+                  <p>
+                    Cancel{" "}
+                    <strong>
+                      {cancelling.counterparty} / {cancelling.reference}
+                    </strong>
+                    ? It will stay in the list for review but no longer affect
+                    the forecast. This cannot be undone.
+                  </p>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void action(async () => {
+                        await request(
+                          `/api/documents/${cancelling.id}/cancel`,
+                          "POST",
+                          { revision: cancelling.revision },
+                        );
+                        setCancelling(null);
+                      }, "Document cancelled. Bank data is unchanged.")
+                    }
+                  >
+                    Confirm cancellation
                   </button>
-                </form>
+                  <button disabled={busy} onClick={() => setCancelling(null)}>
+                    Keep document
+                  </button>
+                </div>
               )}
               <div className="activity-toolbar">
                 <div className="tabs" role="tablist" aria-label="Activity type">
@@ -492,6 +518,7 @@ function App() {
                         <th>Amount</th>
                         <th>Remaining</th>
                         <th>Status</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -506,21 +533,76 @@ function App() {
                             </small>
                           </td>
                           <td className="mono">{doc.reference}</td>
-                          <td>{date(doc.dueDate)}</td>
+                          <td>
+                            {date(doc.dueDate)}
+                            {doc.expectedDate && (
+                              <small>Expected {date(doc.expectedDate)}</small>
+                            )}
+                          </td>
                           <td>{money(doc.amount)}</td>
-                          <td>{money(doc.amount - doc.paidAmount)}</td>
+                          <td>
+                            {doc.cancelled
+                              ? "--"
+                              : money(doc.amount - doc.paidAmount)}
+                          </td>
                           <td>
                             <span
-                              className={`status-pill ${doc.paidAmount >= doc.amount ? "settled" : ""}`}
+                              className={`status-pill ${doc.cancelled ? "cancelled" : doc.paidAmount >= doc.amount ? "settled" : doc.dueDate < localToday() ? "overdue" : ""}`}
                             >
-                              {documentState(doc.amount, doc.paidAmount)}
+                              {doc.cancelled
+                                ? "Cancelled"
+                                : documentState(doc.amount, doc.paidAmount)}
+                              {!doc.cancelled &&
+                                doc.paidAmount < doc.amount &&
+                                doc.dueDate < localToday() &&
+                                " / Overdue"}
                             </span>
+                          </td>
+                          <td>
+                            {!doc.cancelled && (
+                              <div className="row-actions">
+                                <button
+                                  disabled={busy}
+                                  aria-label={`Edit ${doc.reference}`}
+                                  onClick={() => {
+                                    setEditing(doc);
+                                    setShowForm(true);
+                                    setCancelling(null);
+                                    window.setTimeout(
+                                      () =>
+                                        document
+                                          .getElementById("activity")
+                                          ?.scrollIntoView({ block: "start" }),
+                                      0,
+                                    );
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  disabled={busy || doc.paidAmount > 0}
+                                  title={
+                                    doc.paidAmount > 0
+                                      ? "Matched documents cannot be cancelled"
+                                      : "Cancel this document"
+                                  }
+                                  aria-label={`Cancel ${doc.reference}`}
+                                  onClick={() => {
+                                    setCancelling(doc);
+                                    setShowForm(false);
+                                    setEditing(null);
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
                       {data.documents.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="empty">
+                          <td colSpan={7} className="empty">
                             No documents yet. Add an invoice, import a CSV, or
                             load the demo.
                           </td>
@@ -603,7 +685,9 @@ function App() {
                             : "No planned movement"}
                         </td>
                         <td className={day.balance < 0 ? "negative" : ""}>
-                          {data.account ? money(day.balance) : "Sync required"}
+                          {hasOpeningBalance
+                            ? money(day.balance)
+                            : "Opening balance required"}
                         </td>
                       </tr>
                     ))}
