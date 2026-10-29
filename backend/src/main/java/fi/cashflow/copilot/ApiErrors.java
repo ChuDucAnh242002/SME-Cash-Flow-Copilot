@@ -45,10 +45,19 @@ public class ApiErrors {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
     }
 
-    @ExceptionHandler({ConstraintViolationException.class, HandlerMethodValidationException.class})
-    ProblemDetail parameters(Exception exception) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
-                "Forecast days must be 7-90 and incomeDelayDays must be 0-60.");
+    @ExceptionHandler(ConstraintViolationException.class)
+    ProblemDetail parameters(ConstraintViolationException exception) {
+        String detail = exception.getConstraintViolations().stream()
+                .map(violation -> violation.getPropertyPath() + ": " + violation.getMessage())
+                .sorted().reduce((a, b) -> a + "; " + b).orElse("Invalid request parameters.");
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    ProblemDetail methodParameters(HandlerMethodValidationException exception) {
+        String detail = exception.getAllErrors().stream().map(error -> error.getDefaultMessage())
+                .reduce((a, b) -> a + "; " + b).orElse("Invalid request parameters.");
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
     }
 
     @ExceptionHandler(CsvImport.CsvException.class)

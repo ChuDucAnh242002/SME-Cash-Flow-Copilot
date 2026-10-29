@@ -71,7 +71,8 @@ public class FinanceStore {
                 (SELECT last_error FROM outbox WHERE published_at IS NULL AND last_error IS NOT NULL
                   ORDER BY created_at LIMIT 1) AS event_error FROM workspace w WHERE id=1
                 """, (rs, row) -> new Status(rs.getString("bank_mode"), instant(rs, "last_sync"),
-                rs.getString("sync_error"), instant(rs, "last_reconciled"), rs.getLong("pending"), rs.getString("event_error")));
+                rs.getString("sync_error"), instant(rs, "last_reconciled"), rs.getLong("pending"), rs.getString("event_error"),
+                rs.getObject("statement_date", LocalDate.class)));
     }
 
     public void lock() { jdbc.queryForObject("SELECT id FROM workspace WHERE id=1 FOR UPDATE", Integer.class); }
@@ -89,6 +90,10 @@ public class FinanceStore {
     }
 
     public SyncResult saveSnapshot(BankSnapshot snapshot) {
+        return saveSnapshot(snapshot, "BANK_SYNCED");
+    }
+
+    public SyncResult saveSnapshot(BankSnapshot snapshot, String eventType) {
         Account account = snapshot.account();
         Account current = account();
         if (current != null && !current.id().equals(account.id())) {
@@ -118,7 +123,7 @@ public class FinanceStore {
             }
         }
         jdbc.update("UPDATE workspace SET last_sync=?,sync_error=NULL WHERE id=1", Timestamp.from(account.observedAt()));
-        enqueue("BANK_SYNCED");
+        enqueue(eventType);
         return new SyncResult(imported, snapshot.transactions().size());
     }
 

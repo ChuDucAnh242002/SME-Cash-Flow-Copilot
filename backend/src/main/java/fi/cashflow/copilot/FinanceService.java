@@ -114,6 +114,9 @@ public class FinanceService implements ApplicationRunner {
     }
 
     public SyncResult sync() {
+        if (mode.equals("statement")) {
+            throw new IllegalStateException("Bank sync is disabled in statement mode. Preview and import a statement instead.");
+        }
         // Serialize manual syncs across replicas without holding a database transaction during HTTP requests.
         // The PostgreSQL session advisory lock is released even when an upstream request fails.
         return store.jdbc().execute((org.springframework.jdbc.core.ConnectionCallback<SyncResult>) connection -> {

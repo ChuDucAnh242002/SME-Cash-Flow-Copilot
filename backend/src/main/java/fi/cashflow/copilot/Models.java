@@ -29,6 +29,23 @@ public final class Models {
             @DecimalMin("-999999999.99") @DecimalMax("999999999.99")
             @Digits(integer = 9, fraction = 2) BigDecimal openingBalance) {}
 
+    public record StatementInput(
+            @NotBlank @Pattern(regexp = "[A-Za-z0-9._:-]{1,128}") String accountId,
+            @NotBlank @Size(max = 160) String accountName,
+            @NotNull @DecimalMin("-999999999.99") @DecimalMax("999999999.99")
+            @Digits(integer = 9, fraction = 2) BigDecimal closingBalance,
+            @NotNull LocalDate closingDate) {}
+    public record StatementRow(
+            @NotBlank @Size(max = 128) String transactionId,
+            @NotNull LocalDate bookingDate,
+            @NotNull @DecimalMin("-999999999.99") @DecimalMax("999999999.99")
+            @Digits(integer = 9, fraction = 2) BigDecimal amount,
+            @NotNull @Size(max = 80) String reference,
+            @NotBlank @Size(max = 160) String counterparty) {}
+    public record StatementPreviewRow(StatementRow transaction, boolean duplicate) {}
+    public record StatementPreview(long revision, StatementInput statement,
+                                   List<StatementPreviewRow> rows, int newCount, int duplicateCount) {}
+
     public record Document(UUID id, Kind kind, String counterparty, String reference,
                            BigDecimal amount, LocalDate dueDate, BigDecimal paidAmount,
                            LocalDate expectedDate, boolean cancelled, long revision) {
@@ -49,7 +66,7 @@ public final class Models {
     public record Forecast(int days, int incomeDelayDays, BigDecimal openingBalance, BigDecimal minimumBalance,
                            LocalDate firstShortfall, List<ForecastDay> series, List<String> assumptions) {}
     public record Status(String mode, Instant lastSync, String syncError, Instant lastReconciled,
-                         long pendingEvents, String eventError) {}
+                         long pendingEvents, String eventError, LocalDate statementDate) {}
     public record Dashboard(Status status, Account account, BigDecimal planningBalance, List<Document> documents,
                             List<BankTransaction> transactions, Forecast forecast) {}
     public record FinanceEvent(UUID id, String type, int schemaVersion) {}

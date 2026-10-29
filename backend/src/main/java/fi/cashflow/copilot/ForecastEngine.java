@@ -32,10 +32,10 @@ public class ForecastEngine {
             series.add(new ForecastDay(date, balance, List.copyOf(items)));
         }
         return new Forecast(days, delayDays, opening, minimum, shortfall, series, List.of(
-                "EUR only. Opening balance uses the saved planning override when set; otherwise the last observed booked bank balance. Imported transactions are not added again.",
+                "EUR only. Opening balance uses the saved planning override when set; otherwise the last observed booked account balance (bank snapshot or uploaded statement). Imported transactions are not added again.",
                 "Only unpaid portions of active invoices and expenses are forecast. Cancelled items are excluded. No automatic recurring expenses or tax calculations.",
                 "Receipts are assumed on their expected date (or due date) plus " + delayDays + " days; past movements are placed today.",
                 "Daily closing balances, not intraday liquidity. No guarantee that customers pay, and no credit facilities included.",
-                "Dates use Europe/Helsinki. A stale bank balance makes the forecast stale."));
+                "Dates use Europe/Helsinki. A stale opening balance makes the forecast stale. Uploaded statements are not bank-verified; later activity is unknown until another import."));
     }
 }

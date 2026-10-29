@@ -70,6 +70,15 @@ class FinanceIntegrationTest {
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/dashboard?days=999").with(httpBasic("developer", "integration-test-password")))
                 .andExpect(status().isBadRequest());
+        mvc.perform(multipart("/api/statements/preview")
+                .file(new org.springframework.mock.web.MockMultipartFile("file", "statement.csv", "text/csv",
+                        ("transactionId,bookingDate,amount,reference,counterparty\n"
+                                + "receipt,2026-10-28,10,,Company").getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                .param("accountId", "CSV-EUR").param("accountName", "Company")
+                .param("closingBalance", "100").param("closingDate", "2026-10-29")
+                .with(httpBasic("developer", "integration-test-password")).with(csrf()))
+                .andExpect(status().isConflict());
+        assertThat(store.account()).isNull();
         mvc.perform(post("/api/documents").with(httpBasic("developer", "integration-test-password")).with(csrf())
                         .contentType("application/json").content("""
                                 {"kind":"INVOICE","counterparty":"Invalid","reference":"invalid","amount":-1,"dueDate":"2026-10-29"}
