@@ -56,6 +56,8 @@ class StatementIntegrationTest {
         tx.executeWithoutResult(status -> {
             store.lock();
             store.jdbc().update("DELETE FROM allocation");
+            store.jdbc().update("DELETE FROM payment_review_audit");
+            store.jdbc().update("DELETE FROM payment_review");
             store.jdbc().update("DELETE FROM document");
             store.jdbc().update("DELETE FROM bank_transaction");
             store.jdbc().update("DELETE FROM account");

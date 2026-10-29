@@ -37,6 +37,7 @@ class FinanceIntegrationTest {
     @Autowired EventPipeline events;
     @Autowired TransactionTemplate tx;
     @Autowired MockMvc mvc;
+    @Autowired PaymentReviewService reviews;
 
     @TestConfiguration
     static class TestClock {
@@ -54,6 +55,8 @@ class FinanceIntegrationTest {
         tx.executeWithoutResult(status -> {
             store.lock();
             store.jdbc().update("DELETE FROM allocation");
+            store.jdbc().update("DELETE FROM payment_review_audit");
+            store.jdbc().update("DELETE FROM payment_review");
             store.jdbc().update("DELETE FROM document");
             store.jdbc().update("DELETE FROM bank_transaction");
             store.jdbc().update("DELETE FROM account");
@@ -249,6 +252,198 @@ class FinanceIntegrationTest {
         await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
                 assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
         assertThat(findDocument("20003").cancelled()).isTrue();
+    }
+
+    @Test
+    void manualLinksAreAuditedAndSurviveSyncKafkaReplayAndDocumentGuards() throws Exception {
+        service.seedDemo();
+        service.sync();
+        service.create(new DocumentInput(Kind.EXPENSE, "Software", "MANUAL-1", new BigDecimal("100"),
+                LocalDate.of(2026, 11, 1)));
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        var software = payment("demo-unmatched-1");
+        assertThat(software.explanation()).isEqualTo(MatchExplanation.MISSING_REFERENCE);
+        var document = findDocument("MANUAL-1");
+        String decision = """
+                {"accountId":"DEMO-FI-EUR","transactionId":"demo-unmatched-1","action":"LINK",
+                 "documentId":"%s","revision":%d,"reason":"Verified supplier statement"}
+                """.formatted(document.id(), software.reviewRevision());
+        mvc.perform(post("/api/reconciliation/decisions").with(httpBasic("developer", "integration-test-password"))
+                .with(csrf()).contentType("application/json").content(decision)).andExpect(status().isNoContent());
+        assertThat(findDocument("MANUAL-1").paidAmount()).isEqualByComparingTo("89");
+        assertThat(service.dashboard(30, 0).forecast().series().getLast().balance()).isEqualByComparingTo("8789");
+        assertThat(service.dashboard(30, 0).account().bookedBalance()).isEqualByComparingTo("12500");
+        var linked = payment("demo-unmatched-1");
+        assertThat(linked.matchMode()).isEqualTo(MatchMode.MANUAL);
+        assertThat(linked.explanation()).isEqualTo(MatchExplanation.MATCHED_MANUALLY);
+        assertThat(linked.reviewRevision()).isGreaterThan(software.reviewRevision());
+        mvc.perform(post("/api/reconciliation/decisions").with(httpBasic("developer", "integration-test-password"))
+                .with(csrf()).contentType("application/json").content(decision)).andExpect(status().isConflict());
+        var audit = reviews.history("DEMO-FI-EUR", "demo-unmatched-1");
+        assertThat(audit).hasSize(1);
+        assertThat(audit.getFirst().actor()).isEqualTo("developer");
+        assertThat(audit.getFirst().reason()).isEqualTo("Verified supplier statement");
+        assertThat(audit.getFirst().nextDocumentLabel()).isEqualTo("Software / MANUAL-1");
+        assertThat(audit.getFirst().previousDocumentId()).isNull();
+        assertThat(audit.getFirst().occurredAt()).isNotNull();
+        service.sync();
+        String payload = "{\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"PAYMENT_REVIEWED\",\"schemaVersion\":1}";
+        var event = new org.apache.kafka.clients.consumer.ConsumerRecord<>("test", 0, 0L, "workspace-1", payload);
+        events.consume(event);
+        events.consume(event);
+        assertThat(payment("demo-unmatched-1").documentId()).isEqualTo(document.id());
+        assertThat(payment("demo-unmatched-1").reviewRevision()).isEqualTo(linked.reviewRevision());
+        assertThat(reviews.history("DEMO-FI-EUR", "demo-unmatched-1")).hasSize(1);
+        assertThatThrownBy(() -> service.cancel(document.id(), new RevisionInput(document.revision())))
+                .hasMessageContaining("matched payments");
+        assertThatThrownBy(() -> service.update(document.id(), new DocumentUpdate(
+                new DocumentInput(Kind.EXPENSE, "Software", "MANUAL-1", new BigDecimal("88"), document.dueDate()), document.revision())))
+                .hasMessageContaining("lower than");
+        mvc.perform(get("/api/reconciliation/history").param("accountId", "DEMO-FI-EUR")
+                .param("transactionId", "demo-unmatched-1").with(httpBasic("developer", "integration-test-password")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].actor").value("developer"));
+        service.update(document.id(), new DocumentUpdate(new DocumentInput(Kind.EXPENSE,
+                "Renamed supplier", "MANUAL-1", document.amount(), document.dueDate()), document.revision()));
+        assertThat(reviews.history("DEMO-FI-EUR", "demo-unmatched-1").getFirst().nextDocumentLabel())
+                .isEqualTo("Software / MANUAL-1");
+        assertThat(findDocument("MANUAL-1").paidAmount()).isEqualByComparingTo("89");
+    }
+
+    @Test
+    void unlinkHoldsPaymentUnmatchedUntilExplicitResumeAndRejectsConcurrentDecisions() throws Exception {
+        service.seedDemo();
+        service.sync();
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        var receipt = payment("demo-receipt-1");
+        assertThat(receipt.explanation()).isEqualTo(MatchExplanation.MATCHED_AUTOMATICALLY);
+        var unlink = new PaymentReviewInput("DEMO-FI-EUR", receipt.externalId(), ReviewAction.UNLINK,
+                null, receipt.reviewRevision(), "Wrong automatic reference");
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Boolean> decide = () -> {
+                start.await();
+                try { reviews.decide(unlink, "developer"); return true; }
+                catch (IllegalStateException conflict) {
+                    assertThat(conflict).hasMessageContaining("match changed"); return false;
+                }
+            };
+            var first = executor.submit(decide);
+            var second = executor.submit(decide);
+            start.countDown();
+            assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(payment(receipt.externalId()).documentId()).isNull();
+        assertThat(payment(receipt.externalId()).matchMode()).isEqualTo(MatchMode.EXCLUDED);
+        assertThat(payment(receipt.externalId()).explanation()).isEqualTo(MatchExplanation.EXCLUDED_BY_USER);
+        assertThat(findDocument("10001").paidAmount()).isEqualByComparingTo("0");
+        service.sync();
+        tx.executeWithoutResult(status -> { store.lock(); store.reconcile(); });
+        assertThat(payment(receipt.externalId()).documentId()).isNull();
+        var excluded = payment(receipt.externalId());
+        reviews.decide(new PaymentReviewInput("DEMO-FI-EUR", receipt.externalId(), ReviewAction.RESUME,
+                null, excluded.reviewRevision(), "Confirmed original reference"), "developer");
+        assertThat(payment(receipt.externalId()).documentId()).isEqualTo(receipt.documentId());
+        assertThat(findDocument("10001").paidAmount()).isEqualByComparingTo("3200");
+        var history = reviews.history("DEMO-FI-EUR", receipt.externalId());
+        assertThat(history).hasSize(2);
+        assertThat(history.getFirst().action()).isEqualTo(ReviewAction.RESUME);
+        assertThat(history.getLast().previousDocumentLabel()).isEqualTo("Aurora Design Oy / 10001");
+        assertThat(history.getLast().nextMode()).isEqualTo(MatchMode.EXCLUDED);
+    }
+
+    @Test
+    void reviewReasonsAndValidationRejectUnsafeLinksWithoutChangingFacts() throws Exception {
+        service.seedDemo();
+        service.sync();
+        service.create(new DocumentInput(Kind.EXPENSE, "Small", "SMALL", new BigDecimal("20"),
+                LocalDate.of(2026, 11, 1)));
+        service.create(new DocumentInput(Kind.EXPENSE, "Cancelled", "CANCELLED", new BigDecimal("100"),
+                LocalDate.of(2026, 11, 1)));
+        service.cancel(findDocument("CANCELLED").id(), new RevisionInput(0L));
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.jdbc().update("""
+                    INSERT INTO bank_transaction VALUES
+                    ('DEMO-FI-EUR','unknown','2026-10-29',10,'UNKNOWN','Customer'),
+                    ('DEMO-FI-EUR','wrong-direction','2026-10-29',10,'20002','Customer'),
+                    ('DEMO-FI-EUR','excess','2026-10-29',-21,'SMALL','Supplier'),
+                    ('DEMO-FI-EUR','cancelled','2026-10-29',-10,'CANCELLED','Supplier'),
+                    ('DEMO-FI-EUR','zero','2026-10-29',0,'SMALL','Supplier')
+                    """);
+            store.reconcile();
+        });
+        assertThat(payment("unknown").explanation()).isEqualTo(MatchExplanation.UNKNOWN_REFERENCE);
+        assertThat(payment("wrong-direction").explanation()).isEqualTo(MatchExplanation.DIRECTION_MISMATCH);
+        assertThat(payment("excess").explanation()).isEqualTo(MatchExplanation.EXCESS_AMOUNT);
+        assertThat(payment("cancelled").explanation()).isEqualTo(MatchExplanation.CANCELLED_DOCUMENT);
+        assertThat(payment("zero").explanation()).isEqualTo(MatchExplanation.ZERO_AMOUNT);
+        var software = payment("demo-unmatched-1");
+        for (String reference : List.of("SMALL", "CANCELLED", "10002")) {
+            assertThatThrownBy(() -> reviews.decide(new PaymentReviewInput("DEMO-FI-EUR", software.externalId(),
+                    ReviewAction.LINK, findDocument(reference).id(), software.reviewRevision(), "Review"), "developer"))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+        assertThat(reviews.history("DEMO-FI-EUR", software.externalId())).isEmpty();
+        assertThat(payment(software.externalId()).reviewRevision()).isEqualTo(software.reviewRevision());
+        String body = """
+                {"accountId":"DEMO-FI-EUR","transactionId":"demo-unmatched-1","action":"LINK",
+                 "revision":0,"reason":" "}
+                """;
+        mvc.perform(post("/api/reconciliation/decisions").contentType("application/json").content(body)
+                .with(httpBasic("developer", "integration-test-password"))).andExpect(status().isForbidden());
+        mvc.perform(post("/api/reconciliation/decisions").contentType("application/json").content(body)
+                .with(csrf()).with(httpBasic("developer", "integration-test-password"))).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/reconciliation/history").param("accountId", "DEMO-FI-EUR").param("transactionId", "unknown"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/reconciliation/history").param("accountId", "OTHER").param("transactionId", "unknown")
+                .with(httpBasic("developer", "integration-test-password"))).andExpect(status().isNotFound());
+        assertThat(store.account().bookedBalance()).isEqualByComparingTo("12500");
+    }
+
+    @Test
+    void competingLinksCannotOverAllocateTheSameDocument() throws Exception {
+        service.sync();
+        service.create(new DocumentInput(Kind.EXPENSE, "Supplier", "TARGET", new BigDecimal("100"),
+                LocalDate.of(2026, 11, 1)));
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(30, 0).status().pendingEvents()).isZero());
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.jdbc().update("""
+                    INSERT INTO bank_transaction VALUES
+                    ('DEMO-FI-EUR','competing-a','2026-10-29',-60,'','Supplier'),
+                    ('DEMO-FI-EUR','competing-b','2026-10-29',-60,'','Supplier')
+                    """);
+        });
+        var target = findDocument("TARGET");
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.function.Function<String, java.util.concurrent.Callable<Boolean>> decide = id -> () -> {
+                start.await();
+                try {
+                    reviews.decide(new PaymentReviewInput("DEMO-FI-EUR", id, ReviewAction.LINK,
+                            target.id(), 0L, "Verified receipt"), "developer");
+                    return true;
+                } catch (IllegalStateException conflict) {
+                    assertThat(conflict).hasMessageContaining("exceeds"); return false;
+                }
+            };
+            var first = executor.submit(decide.apply("competing-a"));
+            var second = executor.submit(decide.apply("competing-b"));
+            start.countDown();
+            assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(findDocument("TARGET").paidAmount()).isEqualByComparingTo("60");
+        assertThat(reviews.history("DEMO-FI-EUR", "competing-a").size()
+                + reviews.history("DEMO-FI-EUR", "competing-b").size()).isEqualTo(1);
+    }
+
+    BankTransaction payment(String externalId) {
+        return store.transactions().stream().filter(t -> t.externalId().equals(externalId)).findFirst().orElseThrow();
     }
 
     Document findDocument(String reference) {

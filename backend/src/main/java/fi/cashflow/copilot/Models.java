@@ -9,6 +9,24 @@ public final class Models {
     private Models() {}
 
     public enum Kind { INVOICE, EXPENSE }
+    public enum MatchMode { AUTO, MANUAL, EXCLUDED }
+    public enum ReviewAction { LINK, UNLINK, RESUME }
+    public record TransactionKey(String accountId, String transactionId) {}
+    public enum MatchExplanation {
+        MATCHED_AUTOMATICALLY, MATCHED_MANUALLY, EXCLUDED_BY_USER, MISSING_REFERENCE,
+        UNKNOWN_REFERENCE, CANCELLED_DOCUMENT, DIRECTION_MISMATCH, EXCESS_AMOUNT,
+        ZERO_AMOUNT, RECONCILIATION_PENDING
+    }
+
+    public record PaymentReviewInput(
+            @NotBlank String accountId, @NotBlank String transactionId,
+            @NotNull ReviewAction action, UUID documentId,
+            @NotNull @PositiveOrZero Long revision,
+            @NotBlank @Size(max = 500) String reason) {}
+    public record PaymentReviewAudit(long id, ReviewAction action, MatchMode previousMode,
+                                    UUID previousDocumentId, String previousDocumentLabel,
+                                    MatchMode nextMode, UUID nextDocumentId, String nextDocumentLabel,
+                                    String reason, String actor, Instant occurredAt) {}
 
     public record DocumentInput(
             @NotNull Kind kind,
@@ -57,7 +75,14 @@ public final class Models {
     }
 
     public record BankTransaction(String accountId, String externalId, LocalDate bookingDate,
-                                  BigDecimal amount, String reference, String counterparty, UUID documentId) {}
+                                  BigDecimal amount, String reference, String counterparty, UUID documentId,
+                                  MatchMode matchMode, long reviewRevision, MatchExplanation explanation) {
+        public BankTransaction(String accountId, String externalId, LocalDate bookingDate,
+                               BigDecimal amount, String reference, String counterparty, UUID documentId) {
+            this(accountId, externalId, bookingDate, amount, reference, counterparty, documentId,
+                    MatchMode.AUTO, 0, null);
+        }
+    }
 
     public record Account(String id, String name, String currency, BigDecimal bookedBalance, Instant observedAt) {}
     public record BankSnapshot(Account account, List<BankTransaction> transactions) {}

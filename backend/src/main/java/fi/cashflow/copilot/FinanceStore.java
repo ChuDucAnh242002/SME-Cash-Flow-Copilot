@@ -48,13 +48,39 @@ public class FinanceStore {
     }
 
     public List<BankTransaction> transactions() {
+        Map<String, Document> byReference = new HashMap<>();
+        for (Document document : documents()) byReference.put(normalizeReference(document.reference()), document);
         return jdbc.query("""
-                SELECT t.*, a.document_id FROM bank_transaction t
+                SELECT t.*, a.document_id, COALESCE(r.mode,'AUTO') AS match_mode,
+                    COALESCE(r.revision,0) AS review_revision FROM bank_transaction t
                 LEFT JOIN allocation a ON a.account_id=t.account_id AND a.transaction_id=t.external_id
+                LEFT JOIN payment_review r ON r.account_id=t.account_id AND r.transaction_id=t.external_id
                 ORDER BY t.booking_date, t.external_id
-                """, (rs, row) -> new BankTransaction(rs.getString("account_id"), rs.getString("external_id"),
-                rs.getObject("booking_date", LocalDate.class), rs.getBigDecimal("amount"),
-                rs.getString("reference"), rs.getString("counterparty"), rs.getObject("document_id", UUID.class)));
+                """, (rs, row) -> {
+                    UUID documentId = rs.getObject("document_id", UUID.class);
+                    MatchMode mode = MatchMode.valueOf(rs.getString("match_mode"));
+                    BigDecimal amount = rs.getBigDecimal("amount");
+                    String reference = rs.getString("reference");
+                    return new BankTransaction(rs.getString("account_id"), rs.getString("external_id"),
+                            rs.getObject("booking_date", LocalDate.class), amount, reference, rs.getString("counterparty"),
+                            documentId, mode, rs.getLong("review_revision"),
+                            explanation(documentId, mode, amount, reference, byReference));
+                });
+    }
+
+    private MatchExplanation explanation(UUID documentId, MatchMode mode, BigDecimal amount, String reference,
+                                         Map<String, Document> byReference) {
+        if (documentId != null) return mode == MatchMode.MANUAL
+                ? MatchExplanation.MATCHED_MANUALLY : MatchExplanation.MATCHED_AUTOMATICALLY;
+        if (mode == MatchMode.EXCLUDED) return MatchExplanation.EXCLUDED_BY_USER;
+        if (amount.signum() == 0) return MatchExplanation.ZERO_AMOUNT;
+        if (normalizeReference(reference).isEmpty()) return MatchExplanation.MISSING_REFERENCE;
+        Document document = byReference.get(normalizeReference(reference));
+        if (document == null) return MatchExplanation.UNKNOWN_REFERENCE;
+        if (document.cancelled()) return MatchExplanation.CANCELLED_DOCUMENT;
+        if ((document.kind() == Kind.INVOICE) != (amount.signum() > 0)) return MatchExplanation.DIRECTION_MISMATCH;
+        if (amount.abs().compareTo(document.remaining()) > 0) return MatchExplanation.EXCESS_AMOUNT;
+        return MatchExplanation.RECONCILIATION_PENDING;
     }
 
     public Account account() {
@@ -128,25 +154,64 @@ public class FinanceStore {
     }
 
     public void reconcile() {
-        // Rebuild deterministically so invoices entered after a sync can match historical receipts.
+        jdbc.update("""
+                INSERT INTO payment_review(account_id,transaction_id)
+                SELECT account_id,external_id FROM bank_transaction ON CONFLICT DO NOTHING
+                """);
+        var before = transactions();
+        Map<TransactionKey, UUID> manual = new HashMap<>();
+        jdbc.query("SELECT account_id,transaction_id,document_id FROM payment_review WHERE mode='MANUAL'", rs -> {
+            manual.put(new TransactionKey(rs.getString("account_id"), rs.getString("transaction_id")),
+                    rs.getObject("document_id", UUID.class));
+        });
+        // Reserve manual decisions first; automatic replay must never replace them.
         jdbc.update("DELETE FROM allocation");
         Map<String, Document> byReference = new HashMap<>();
+        Map<UUID, Document> byId = new HashMap<>();
         for (Document document : documents()) {
+            byId.put(document.id(), document);
             if (!document.cancelled()) byReference.put(normalizeReference(document.reference()), document);
         }
         Map<UUID, BigDecimal> allocated = new HashMap<>();
-        for (BankTransaction transaction : transactions()) {
+        for (BankTransaction transaction : before) {
+            if (transaction.matchMode() != MatchMode.MANUAL) continue;
+            Document document = byId.get(manual.get(new TransactionKey(transaction.accountId(), transaction.externalId())));
+            if (document == null || document.cancelled() || transaction.amount().signum() == 0
+                    || (document.kind() == Kind.INVOICE) != (transaction.amount().signum() > 0)
+                    || allocated.getOrDefault(document.id(), BigDecimal.ZERO).add(transaction.amount().abs())
+                        .compareTo(document.amount()) > 0) {
+                throw new IllegalStateException("A manual payment decision conflicts with its document. Review the match before changing this document.");
+            }
+            allocate(transaction, document, allocated);
+        }
+        for (BankTransaction transaction : before) {
+            if (transaction.matchMode() != MatchMode.AUTO) continue;
             Document document = byReference.get(normalizeReference(transaction.reference()));
             if (document == null || transaction.amount().signum() == 0) continue;
             if ((document.kind() == Kind.INVOICE) != (transaction.amount().signum() > 0)) continue;
             BigDecimal amount = transaction.amount().abs();
             BigDecimal total = allocated.getOrDefault(document.id(), BigDecimal.ZERO).add(amount);
             if (total.compareTo(document.amount()) > 0) continue;
-            jdbc.update("INSERT INTO allocation(account_id,transaction_id,document_id,amount) VALUES (?,?,?,?)",
-                    transaction.accountId(), transaction.externalId(), document.id(), amount);
-            allocated.put(document.id(), total);
+            allocate(transaction, document, allocated);
+        }
+        Map<TransactionKey, UUID> after = new HashMap<>();
+        for (BankTransaction transaction : transactions()) {
+            after.put(new TransactionKey(transaction.accountId(), transaction.externalId()), transaction.documentId());
+        }
+        for (BankTransaction transaction : before) {
+            if (!Objects.equals(transaction.documentId(), after.get(new TransactionKey(transaction.accountId(), transaction.externalId())))) {
+                jdbc.update("UPDATE payment_review SET revision=revision+1 WHERE account_id=? AND transaction_id=?",
+                        transaction.accountId(), transaction.externalId());
+            }
         }
         jdbc.update("UPDATE workspace SET last_reconciled=now() WHERE id=1");
+    }
+
+    private void allocate(BankTransaction transaction, Document document, Map<UUID, BigDecimal> allocated) {
+        BigDecimal amount = transaction.amount().abs();
+        jdbc.update("INSERT INTO allocation(account_id,transaction_id,document_id,amount) VALUES (?,?,?,?)",
+                transaction.accountId(), transaction.externalId(), document.id(), amount);
+        allocated.merge(document.id(), amount, BigDecimal::add);
     }
 
     static Instant instant(ResultSet rs, String column) throws SQLException {
