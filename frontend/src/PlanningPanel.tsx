@@ -4,11 +4,13 @@ export function PlanningPanel({
   balance,
   hasBank,
   busy,
+  statement = false,
   onSave,
 }: {
   balance: number | null;
   hasBank: boolean;
   busy: boolean;
+  statement?: boolean;
   onSave: (balance: string | null) => void;
 }) {
   return (
@@ -16,7 +18,9 @@ export function PlanningPanel({
       <div>
         <p className="eyebrow">
           {balance === null
-            ? "BANK-BASED OUTLOOK"
+            ? statement
+              ? "STATEMENT-BASED OUTLOOK"
+              : "BANK-BASED OUTLOOK"
             : "PLANNING SCENARIO / NOT A BANK BALANCE"}
         </p>
         <h2>
@@ -25,8 +29,11 @@ export function PlanningPanel({
             : `Scenario opening balance: ${money(balance)}`}
         </h2>
         <p>
-          A workspace-wide, saved what-if balance. This never changes the
-          reported bank balance. A bank sync will not overwrite it.
+          A workspace-wide, saved what-if balance. This never changes the{" "}
+          {statement
+            ? "uploaded statement balance. A statement import"
+            : "reported bank balance. A bank sync"}{" "}
+          will not overwrite it.
         </p>
       </div>
       <form
@@ -57,7 +64,11 @@ export function PlanningPanel({
           </button>
           {balance !== null && (
             <button type="button" disabled={busy} onClick={() => onSave(null)}>
-              {hasBank ? "Use bank balance" : "Clear planning balance"}
+              {hasBank
+                ? statement
+                  ? "Use statement balance"
+                  : "Use bank balance"
+                : "Clear planning balance"}
             </button>
           )}
         </div>

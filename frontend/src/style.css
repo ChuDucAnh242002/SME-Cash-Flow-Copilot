@@ -7,6 +7,56 @@
   font-size: 14px;
   line-height: 1.5;
 }
+.statement-panel {
+  padding: 26px;
+  margin-bottom: 24px;
+}
+.statement-panel h2,
+.statement-panel p,
+.statement-panel form {
+  margin-bottom: 12px;
+}
+.statement-format code {
+  overflow-wrap: anywhere;
+}
+.statement-panel fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0 0 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+.statement-panel legend {
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.statement-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.statement-panel input {
+  min-width: 0;
+  width: 100%;
+}
+.statement-preview {
+  min-width: 0;
+  border-top: 1px solid #d2dcd6;
+  margin-top: 20px;
+  padding-top: 12px;
+}
+.statement-panel .statement-confirm {
+  flex-direction: row;
+  align-items: flex-start;
+  margin: 16px 0;
+}
+.statement-confirm input {
+  width: auto;
+  margin-top: 5px;
+}
 * {
   box-sizing: border-box;
 }

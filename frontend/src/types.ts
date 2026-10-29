@@ -27,12 +27,13 @@ export interface ForecastDay {
 }
 export interface Dashboard {
   status: {
-    mode: "demo" | "nordea";
+    mode: "demo" | "nordea" | "statement";
     lastSync: string | null;
     syncError: string | null;
     lastReconciled: string | null;
     pendingEvents: number;
     eventError: string | null;
+    statementDate: string | null;
   };
   account: {
     id: string;
@@ -53,4 +54,26 @@ export interface Dashboard {
     series: ForecastDay[];
     assumptions: string[];
   };
+}
+
+export interface StatementPreview {
+  revision: number;
+  statement: {
+    accountId: string;
+    accountName: string;
+    closingBalance: number;
+    closingDate: string;
+  };
+  newCount: number;
+  duplicateCount: number;
+  rows: {
+    transaction: {
+      transactionId: string;
+      bookingDate: string;
+      amount: number;
+      reference: string;
+      counterparty: string;
+    };
+    duplicate: boolean;
+  }[];
 }

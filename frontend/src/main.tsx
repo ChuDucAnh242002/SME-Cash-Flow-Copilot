@@ -6,6 +6,7 @@ import { date, documentState, localToday, money } from "./format";
 import type { Dashboard, Document } from "./types";
 import { DocumentForm } from "./DocumentForm";
 import { PlanningPanel } from "./PlanningPanel";
+import { StatementPanel } from "./StatementPanel";
 import "./style.css";
 
 function App() {
@@ -84,6 +85,7 @@ function App() {
     data?.status.lastSync &&
     Date.now() - new Date(data.status.lastSync).getTime() > 15 * 60 * 1000;
   const demo = data?.status.mode === "demo";
+  const statement = data?.status.mode === "statement";
   const planning =
     data?.planningBalance !== null && data?.planningBalance !== undefined;
   const hasOpeningBalance = !!data?.account || planning;
@@ -128,7 +130,13 @@ function App() {
         <header className="topbar">
           <span>BUSINESS FINANCE / OVERVIEW</span>
           <span className={`mode-badge ${demo ? "demo" : ""}`}>
-            {data ? (demo ? "DEMO DATA" : "NORDEA SANDBOX") : "CONNECTING"}
+            {data
+              ? demo
+                ? "DEMO DATA"
+                : statement
+                  ? "UPLOADED STATEMENTS"
+                  : "NORDEA SANDBOX"
+              : "CONNECTING"}
           </span>
         </header>
         <section className="page-heading">
@@ -139,19 +147,21 @@ function App() {
               Less spreadsheet guesswork. More room to plan.
             </p>
           </div>
-          <button
-            className="primary"
-            disabled={busy || !data}
-            onClick={() =>
-              void action(
-                () => request("/api/bank/sync", "POST"),
-                "Bank sync complete. Reconciliation is processed through Kafka.",
-              )
-            }
-          >
-            {busy ? "Working..." : "Sync bank account"}{" "}
-            <span aria-hidden="true">&rarr;</span>
-          </button>
+          {!statement && (
+            <button
+              className="primary"
+              disabled={busy || !data}
+              onClick={() =>
+                void action(
+                  () => request("/api/bank/sync", "POST"),
+                  "Bank sync complete. Reconciliation is processed through Kafka.",
+                )
+              }
+            >
+              {busy ? "Working..." : "Sync bank account"}{" "}
+              <span aria-hidden="true">&rarr;</span>
+            </button>
+          )}
         </section>
         <div aria-live="polite">
           {loadError && (
@@ -190,18 +200,40 @@ function App() {
                 <span className="live-dot" />{" "}
                 {demo
                   ? "Synthetic scenario. Not real bank data."
-                  : "Nordea Instant Reporting / Finnish EUR account"}
+                  : statement
+                    ? "User-uploaded EUR statements. Not bank-verified."
+                    : "Nordea Instant Reporting / Finnish EUR account"}
               </span>
               <span>
                 {data.status.lastSync
-                  ? `Last synced ${new Date(data.status.lastSync).toLocaleString("en-GB", { timeZone: "Europe/Helsinki" })} Helsinki`
-                  : "Not synced yet"}
-                {stale && " / STALE"}
+                  ? `Last ${statement ? "imported" : "synced"} ${new Date(data.status.lastSync).toLocaleString("en-GB", { timeZone: "Europe/Helsinki" })} Helsinki`
+                  : statement
+                    ? "No statement imported"
+                    : "Not synced yet"}
+                {stale && !statement && " / STALE"}
                 {data.status.pendingEvents > 0 &&
                   ` / ${data.status.pendingEvents} events awaiting reconciliation`}
               </span>
             </div>
-            {!data.account && (
+            {statement && (
+              <StatementPanel
+                account={data.account}
+                closingDate={data.status.statementDate}
+                busy={busy}
+                onBusyChange={setBusy}
+                onImported={reload}
+              />
+            )}
+            {statement && data.account && data.status.statementDate && (
+              <div className="message info">
+                Statement closing date: {date(data.status.statementDate)}. The
+                forecast starts today using the uploaded balance unless a
+                planning override is set. Activity since that date is unknown
+                until you import a newer statement. Historical payments are not
+                added again.
+              </div>
+            )}
+            {!data.account && !statement && (
               <div className="message info">
                 Start with <strong>Sync bank account</strong>.{" "}
                 {demo
@@ -212,6 +244,7 @@ function App() {
             <PlanningPanel
               balance={data.planningBalance}
               hasBank={!!data.account}
+              statement={statement}
               busy={busy}
               onSave={(balance) =>
                 void action(
@@ -220,8 +253,8 @@ function App() {
                       openingBalance: balance,
                     }),
                   balance === null
-                    ? "Planning override cleared. Forecast uses the bank balance when available."
-                    : "Planning scenario saved. The bank-reported balance is unchanged.",
+                    ? `Planning override cleared. Forecast uses the ${statement ? "statement" : "bank"} balance when available.`
+                    : `Planning scenario saved. The ${statement ? "uploaded statement" : "bank-reported"} balance is unchanged.`,
                 )
               }
             />
@@ -251,12 +284,22 @@ function App() {
             )}
             <section className="metrics" aria-label="Financial summary">
               <article className="metric">
-                <span>Booked bank balance</span>
+                <span>
+                  {statement
+                    ? "Statement closing balance"
+                    : "Booked bank balance"}
+                </span>
                 <strong>
                   {data.account ? money(data.account.bookedBalance) : "--"}
                 </strong>
                 <small>
-                  {data.account ? "Last bank snapshot / EUR" : "Sync required"}
+                  {data.account
+                    ? statement
+                      ? "Uploaded / not bank-verified / EUR"
+                      : "Last bank snapshot / EUR"
+                    : statement
+                      ? "Import required"
+                      : "Sync required"}
                 </small>
               </article>
               <article className="metric">
@@ -286,7 +329,11 @@ function App() {
                 </strong>
                 <small>
                   {days}-day outlook /{" "}
-                  {planning ? "PLANNING SCENARIO" : "bank-based"}
+                  {planning
+                    ? "PLANNING SCENARIO"
+                    : statement
+                      ? "statement-based"
+                      : "bank-based"}
                 </small>
               </article>
             </section>
@@ -297,8 +344,12 @@ function App() {
                     <p className="eyebrow">LOOK AHEAD</p>
                     <h2>Cash-flow forecast</h2>
                     <small>
-                      {planning ? "Planning scenario" : "Bank-based forecast"} /
-                      opening{" "}
+                      {planning
+                        ? "Planning scenario"
+                        : statement
+                          ? "Statement-based forecast"
+                          : "Bank-based forecast"}{" "}
+                      / opening{" "}
                       {hasOpeningBalance
                         ? money(data.forecast.openingBalance)
                         : "not set"}
@@ -343,8 +394,8 @@ function App() {
                   />
                 ) : (
                   <div className="chart-placeholder">
-                    Sync a bank snapshot or set a planning balance to see your
-                    forecast.
+                    {statement ? "Import a statement" : "Sync a bank snapshot"}{" "}
+                    or set a planning balance to see your forecast.
                   </div>
                 )}
                 <div className="chart-footer">
@@ -370,7 +421,7 @@ function App() {
                 </h2>
                 <p>
                   {!hasOpeningBalance
-                    ? "Sync an account or set a planning balance, then add your expected income and expenses."
+                    ? `${statement ? "Import a statement" : "Sync an account"} or set a planning balance, then add your expected income and expenses.`
                     : data.forecast.firstShortfall
                       ? `Your scenario falls below zero, reaching ${money(data.forecast.minimumBalance)}. Review upcoming receipts and non-critical spending before that date.`
                       : "No negative daily closing balance in this scenario. Late receipts or unrecorded expenses can still change the picture."}
@@ -441,14 +492,17 @@ function App() {
                   <button
                     disabled={busy}
                     onClick={() =>
-                      void action(async () => {
-                        await request(
-                          `/api/documents/${cancelling.id}/cancel`,
-                          "POST",
-                          { revision: cancelling.revision },
-                        );
-                        setCancelling(null);
-                      }, "Document cancelled. Bank data is unchanged.")
+                      void action(
+                        async () => {
+                          await request(
+                            `/api/documents/${cancelling.id}/cancel`,
+                            "POST",
+                            { revision: cancelling.revision },
+                          );
+                          setCancelling(null);
+                        },
+                        `Document cancelled. ${statement ? "Statement" : "Bank"} data is unchanged.`,
+                      )
                     }
                   >
                     Confirm cancellation
@@ -478,7 +532,8 @@ function App() {
                     className={tab === "transactions" ? "selected" : ""}
                     onClick={() => setTab("transactions")}
                   >
-                    Bank transactions <span>{data.transactions.length}</span>
+                    {statement ? "Statement transactions" : "Bank transactions"}{" "}
+                    <span>{data.transactions.length}</span>
                   </button>
                 </div>
                 <label className={`upload-button ${busy ? "disabled" : ""}`}>
@@ -645,8 +700,9 @@ function App() {
                       {data.transactions.length === 0 && (
                         <tr>
                           <td colSpan={5} className="empty">
-                            No bank transactions. Sync your account to import
-                            them.
+                            {statement
+                              ? "No statement transactions. Preview and import a CSV above."
+                              : "No bank transactions. Sync your account to import them."}
                           </td>
                         </tr>
                       )}
@@ -714,9 +770,10 @@ function App() {
                   unique reference per document.
                 </li>
                 <li>
-                  Single workspace and one Finnish EUR account. Sandbox data may
-                  have historical dates. No payments, lending decisions or
-                  production banking access.
+                  {statement
+                    ? "Single workspace and one uploaded EUR account. Statements are user-supplied, not verified with a bank. Closing balance includes historical transactions; they are not added again."
+                    : "Single workspace and one Finnish EUR account. Sandbox data may have historical dates."}{" "}
+                  No payments, lending decisions or production banking access.
                 </li>
                 <li>
                   Reconciliation is asynchronous. During a Kafka outage,
