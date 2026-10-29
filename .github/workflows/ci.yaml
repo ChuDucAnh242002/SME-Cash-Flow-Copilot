@@ -25,10 +25,14 @@ jobs:
       - run: mvn -B verify
         working-directory: backend
       - run: docker compose config --quiet
+      - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml config --quiet
       - run: kubectl kustomize deploy/k8s > /tmp/cashflow-rendered.yaml
       - run: docker compose up --build -d --wait
       - run: node scripts/smoke.mjs
       - run: npx playwright install --with-deps chromium && npm run test:e2e
+        working-directory: frontend
+      - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml up -d --wait
+      - run: STATEMENT_E2E=1 APP_URL=http://127.0.0.1:8081 npm run test:e2e
         working-directory: frontend
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -36,4 +40,6 @@ jobs:
           name: browser-test-results
           path: frontend/test-results
       - run: docker compose down
+        if: always()
+      - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml down
         if: always()

@@ -1,0 +1,12 @@
+services:
+  app:
+    ports: !override
+      - "127.0.0.1:${STATEMENT_APP_PORT:-8081}:8080"
+    environment:
+      BANK_MODE: statement
+      NORDEA_CLIENT_ID: ""
+      NORDEA_ACCOUNT_ID: ""
+      NORDEA_CLIENT_SECRET_FILE: ""
+      NORDEA_ACCESS_TOKEN_FILE: ""
+      NORDEA_PRIVATE_KEY_FILE: ""
+    volumes: !reset []

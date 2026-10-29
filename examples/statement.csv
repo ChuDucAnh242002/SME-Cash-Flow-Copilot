@@ -1,0 +1,4 @@
+transactionId,bookingDate,amount,reference,counterparty
+example-receipt-1,2026-10-28,400.00,STMT-INV,Example Customer Oy
+example-rent-1,2026-10-28,-200.00,STMT-RENT,Example Landlord Oy
+example-subscription-1,2026-10-28,-89.00,,Example Software Oy

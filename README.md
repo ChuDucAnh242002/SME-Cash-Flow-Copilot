@@ -134,7 +134,7 @@ without rebuilding. Automated tests use a local HTTP server for authentication-h
 parsing, pagination and upstream-error cases; a user's first authenticated sandbox sync
 remains an onboarding verification step.
 
-Demo and Nordea modes cannot share a populated database. To preserve your demo while
+Demo, Nordea and statement modes cannot share a workspace database. To preserve your demo while
 starting an independent sandbox workspace:
 
 ```sh
@@ -146,6 +146,97 @@ docker compose -p sme-cashflow-sandbox up --build -d --wait
 
 Stop one workspace before starting the other on the same APP_PORT. Mode and account
 changes are guarded server-side. Do not delete a database just to switch accounts.
+
+## Bank-statement CSV workspace
+
+Statement mode is an **isolated, user-uploaded EUR account**, not another Nordea
+connection. It uses the same documents, forecast engine, transactional outbox and Kafka
+reconciliation as bank mode. Uploaded facts are labelled **not bank-verified**.
+Bank sync and demo seeding are disabled server-side; statement import is rejected
+in demo/Nordea workspaces. There is no in-app workspace switching.
+
+Keep your Nordea workspace on port 8080 and start a separate statement workspace:
+
+```sh
+docker compose -p sme-cashflow-statements -f compose.yaml -f compose.statement.yaml up --build -d --wait
+# Open http://localhost:8081 using your configured APP_USER / APP_PASSWORD.
+```
+
+Always include **`-p sme-cashflow-statements -f compose.yaml -f compose.statement.yaml`**
+when operating this workspace, especially if your ignored `.env` sets
+`COMPOSE_PROJECT_NAME` to your Nordea project. The override pins statement mode,
+uses independent project-scoped PostgreSQL/Kafka volumes, binds only to localhost
+and does **not mount Nordea credential files**. Your `.env` and Nordea containers
+are not changed. Override `STATEMENT_APP_PORT` if 8081 is occupied. A recent Docker
+Compose supporting `!override` and `!reset` is required (2.24.4+).
+
+### Preview, then confirm
+
+1. Choose a stable local account ID (for example `company-eur`) and account name.
+   The first confirmed import binds this database to that ID. It is not a bank
+   authorization or proof that you own an account.
+2. Enter the statement's **closing balance and closing date**, not its balance
+   before the listed transactions. Zero/negative closing balances are valid.
+3. Upload a UTF-8 RFC4180 CSV using this exact header:
+
+   ```csv
+   transactionId,bookingDate,amount,reference,counterparty
+   receipt-1,2026-10-28,400.00,STMT-INV,Example Customer Oy
+   rent-1,2026-10-28,-200.00,STMT-RENT,Example Landlord Oy
+   subscription-1,2026-10-28,-89.00,,Example Software Oy
+   ```
+
+4. Click **Preview statement**. Review every row's **New** or **Duplicate / skip**
+   status, the account, closing balance/date and counts. No financial data is saved.
+   Editing the inputs invalidates the preview; **Discard preview** saves nothing.
+5. Confirm that the closing balance already includes the booked payments, then
+   click **Confirm statement import**. All new rows, the balance and an outbox event
+   are saved atomically. Wait for pending Kafka reconciliation events to reach zero.
+6. Add invoices/expenses with matching references. Full/partial payments reduce
+   their unpaid portions; missing references and excessive payments remain **Needs review**.
+
+The supplied [synthetic example](examples/statement.csv) is for a disposable workspace,
+not for mixing into your actual business data. With a EUR 5,000 closing balance, an
+invoice `STMT-INV` of EUR 1,000 due today + 5 days and expense `STMT-RENT` of EUR 200,
+the example receipt matches EUR 400 and rent settles EUR 200. Only the remaining
+EUR 600 invoice is forecast: final balance **EUR 5,600**, not EUR 5,711.
+Historical transactions are already included in the closing balance and are not added again.
+
+### Import contract and limits
+
+- One EUR account per database. Account IDs use 1–128 ASCII letters/digits or `._:-`.
+  This is a normalized format; automatic bank-specific CSV mapping is not included.
+- At most 500 rows / 256 KB. Transaction IDs are required (max 128 characters),
+  counterparties required (max 160), references optional (max 80). Quote fields
+  containing commas. Dates are ISO `YYYY-MM-DD`; amounts are nonzero signed EUR
+  decimals, up to 9 integer digits and 2 decimals. No exponents, symbols or grouping
+  separators. Positive means incoming, negative means outgoing.
+- Use stable transaction IDs from your export; do not generate IDs from row position
+  or filename. Identity is account ID + transaction ID. Changing an ID can create
+  a duplicate payment: the application cannot infer that two different IDs mean one payment.
+- Re-uploading identical IDs/details skips duplicates, including overlapping statements.
+  Any stored ID with changed date, amount, reference or counterparty rejects the entire
+  file. Repeated IDs within one file are rejected, even if identical.
+- No future closing dates, no transaction after its closing date, and no older
+  closing balance replacing a newer one. A different balance for the same closing
+  date is rejected for review. Later closing dates may replace the balance, retaining
+  prior transaction history. The opening balance before the export is unknown, so
+  CSV totals are not independently validated against the declared closing balance.
+- Confirmation revalidates the file under the workspace lock. A revision from preview
+  prevents confirming after another import; HTTP 409 requires a new preview.
+- The closing balance becomes today's forecast opening unless a saved planning
+  override exists. Imports never overwrite that override. The closing date stays
+  visible: activity after that date is unknown, not automatically projected.
+- Parsed transactions and balance/date are persisted; the original upload is not
+  retained as a file. Real statements contain sensitive information: keep them
+  outside the repository and never commit them. This is not a production banking or
+  accounting integration; reversals and correcting stored facts require future review tooling.
+
+To stop without losing statement data:
+
+```sh
+docker compose -p sme-cashflow-statements -f compose.yaml -f compose.statement.yaml down
+```
 
 ## Architecture
 
@@ -245,6 +336,9 @@ mvn -B verify
 
 Backend tests include exact forecast thresholds, CSV validation, HTTP signing,
 empty continuation pages, repeated cursors, currency errors and token expiry.
+Statement tests cover strict UTF-8/CSV limits, read-only previews, duplicate/conflict
+handling, source/account isolation, stale confirmations, signed amounts, CSRF,
+partial matching and exact forecasts without double-counting historical payments.
 The integration test uses **real PostgreSQL via Testcontainers and embedded Kafka**,
 covering persistence, duplicate syncs, event redelivery, full/partial reconciliation,
 forecast amounts, planning overrides, expected dates, cancellation, stale-write and
@@ -294,6 +388,17 @@ npm run test:e2e
 APP_URL=http://127.0.0.1:8081 npm run test:e2e
 ```
 
+For statement browser tests, use a **separate disposable statement-mode test stack**;
+the tests add synthetic documents/payments and must not run on business data:
+
+```sh
+# From repository root; the user statement workspace remains on 8081.
+STATEMENT_APP_PORT=8082 docker compose -p sme-cashflow-statement-test \
+  -f compose.yaml -f compose.statement.yaml up -d --wait
+cd frontend
+STATEMENT_E2E=1 APP_URL=http://127.0.0.1:8082 npm run test:e2e
+```
+
 Screenshots and failure traces are written to the ignored `frontend/test-results`.
 
 For frontend development: run the backend on port 8080, then `npm run dev` in
@@ -335,7 +440,9 @@ and session cookie obtained from `GET /api/csrf`.
 | POST | `/api/documents/{id}/cancel` | Cancel using `{revision: n}` |
 | PUT | `/api/planning` | Save `{openingBalance: amount}`; `null` clears override |
 | POST | `/api/documents/import` | Multipart `file` CSV import |
-| POST | `/api/bank/sync` | Manual read-only sync |
+| POST | `/api/statements/preview` | Statement-only read-only preview; multipart `file`, `accountId`, `accountName`, `closingBalance`, `closingDate` |
+| POST | `/api/statements/import` | Same multipart fields plus preview `revision`; atomically import and update closing balance |
+| POST | `/api/bank/sync` | Manual read-only sync (disabled in statement mode) |
 | POST | `/api/demo/seed` | Load documents into an empty demo workspace only |
 | GET | `/api/csrf` | Session-bound write token |
 
@@ -344,6 +451,10 @@ include `expectedDate`, `cancelled` and `revision`; top-level `planningBalance` 
 Revision increments on edits/cancellation, not on reconciliation. Unknown document IDs
 return HTTP 404. Schema migration V2 adds these fields without changing existing records,
 balances or allocations. Back up the database before upgrading.
+Migration V3 adds statement closing-date/import-revision metadata and permits
+statement mode in the workspace constraint. Existing workspace modes, account facts,
+documents and allocations are preserved; changing a populated workspace's mode remains forbidden.
+The dashboard's `status.statementDate` is nullable outside confirmed statement imports.
 
 Validation errors return HTTP 400, conflicts 409 and bank integration failures 502,
 using problem details. Browser/server errors never turn into a successful empty bank sync.
