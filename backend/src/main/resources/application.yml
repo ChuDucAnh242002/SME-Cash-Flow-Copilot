@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: cash-flow-copilot
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/copilot}
+    username: ${DATABASE_USER:copilot}
+    password: ${POSTGRES_PASSWORD}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      group-id: cashflow-reconciliation-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 256KB
+      max-request-size: 300KB
+server:
+  error:
+    include-message: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db
+app:
+  user: ${APP_USER:developer}
+  password: ${APP_PASSWORD}
+  bank-mode: ${BANK_MODE:demo}
+  kafka-topic: cashflow.finance-changed.v1
+  nordea:
+    client-id: ${NORDEA_CLIENT_ID:}
+    account-id: ${NORDEA_ACCOUNT_ID:}
+    from-date: ${NORDEA_FROM_DATE:2026-01-01}
+    client-secret-file: ${NORDEA_CLIENT_SECRET_FILE:/run/nordea/client-secret}
+    access-token-file: ${NORDEA_ACCESS_TOKEN_FILE:/run/nordea/access-token}
+    private-key-file: ${NORDEA_PRIVATE_KEY_FILE:}
