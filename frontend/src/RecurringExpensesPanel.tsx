@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { request } from "./api";
 import { date, localToday, money } from "./format";
 import type { Document, RecurringExpense } from "./types";
@@ -17,6 +17,27 @@ export function RecurringExpensesPanel({
   const [showForm, setShowForm] = useState(false);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [stopping, setStopping] = useState<RecurringExpense | null>(null);
+  const firstField = useRef<HTMLInputElement>(null);
+  const formToggle = useRef<HTMLButtonElement>(null);
+  const stopHeading = useRef<HTMLParagraphElement>(null);
+  const stopOrigin = useRef<HTMLButtonElement | null>(null);
+  const wasOpen = useRef(false);
+  const wasStopping = useRef(false);
+
+  useEffect(() => {
+    if (showForm && !wasOpen.current && !busy) firstField.current?.focus();
+    else if (wasOpen.current && !busy) formToggle.current?.focus();
+    if (!busy) wasOpen.current = showForm;
+  }, [showForm, busy]);
+
+  useEffect(() => {
+    if (stopping) stopHeading.current?.focus();
+    else if (wasStopping.current && !busy) {
+      if (stopOrigin.current?.isConnected) stopOrigin.current.focus();
+      else formToggle.current?.focus();
+    }
+    if (!busy) wasStopping.current = !!stopping;
+  }, [stopping, busy]);
   const stopStale =
     stopping &&
     rules.find((rule) => rule.id === stopping.id)?.revision !==
@@ -39,7 +60,10 @@ export function RecurringExpensesPanel({
           duplicate obligations with different references.
         </p>
         <button
+          ref={formToggle}
           type="button"
+          aria-expanded={showForm}
+          aria-controls={showForm ? "recurring-form" : undefined}
           disabled={busy}
           onClick={() => setShowForm(!showForm)}
         >
@@ -47,6 +71,7 @@ export function RecurringExpensesPanel({
         </button>
         {showForm && (
           <form
+            id="recurring-form"
             className="recurring-form"
             onChange={() => setRequestId(crypto.randomUUID())}
             onSubmit={(event) => {
@@ -69,6 +94,7 @@ export function RecurringExpensesPanel({
             <label>
               Recurring supplier or description
               <input
+                ref={firstField}
                 name="counterparty"
                 required
                 maxLength={160}
@@ -125,7 +151,7 @@ export function RecurringExpensesPanel({
             role="region"
             aria-label="Confirm recurring rule stop"
           >
-            <p>
+            <p ref={stopHeading} tabIndex={-1}>
               Stop generating new expenses for{" "}
               <strong>{stopping.counterparty}</strong>? All existing documents,
               amounts and payment matches remain unchanged. This cannot be
@@ -164,7 +190,12 @@ export function RecurringExpensesPanel({
         {rules.length === 0 ? (
           <p>No monthly rules yet.</p>
         ) : (
-          <div className="table-scroll">
+          <div
+            className="table-scroll"
+            role="region"
+            aria-label="Monthly recurring rules"
+            tabIndex={0}
+          >
             <table>
               <thead>
                 <tr>
@@ -224,7 +255,10 @@ export function RecurringExpensesPanel({
                             type="button"
                             disabled={busy}
                             aria-label={`Stop monthly ${rule.counterparty}`}
-                            onClick={() => setStopping(rule)}
+                            onClick={(event) => {
+                              stopOrigin.current = event.currentTarget;
+                              setStopping(rule);
+                            }}
                           >
                             Stop rule
                           </button>

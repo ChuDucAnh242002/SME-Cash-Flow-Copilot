@@ -95,7 +95,12 @@ export function ForecastExplanation({
                 {shortfall.contributions.length === 0 ? (
                   <p>No document movements on or before this day.</p>
                 ) : (
-                  <div className="table-scroll">
+                  <div
+                    className="table-scroll"
+                    role="region"
+                    aria-label="Shortage contributing documents"
+                    tabIndex={0}
+                  >
                     <table>
                       <thead>
                         <tr>

@@ -122,6 +122,9 @@ test("monthly rules create unique ordinary expenses, retry safely and stop witho
     await page
       .getByRole("button", { name: "Add monthly expense", exact: true })
       .click();
+    await expect(
+      page.getByLabel("Recurring supplier or description", { exact: true }),
+    ).toBeFocused();
     await page
       .getByLabel("Recurring supplier or description", { exact: true })
       .fill(description);
@@ -139,6 +142,9 @@ test("monthly rules create unique ordinary expenses, retry safely and stop witho
     await expect(
       page.getByText("Monthly rule saved.", { exact: false }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Add monthly expense", exact: true }),
+    ).toBeFocused();
     const created = await (await request.get("/api/dashboard?days=90")).json();
     const occurrences = created.documents.filter(
       (document: { recurringExpenseId: string }) =>
@@ -184,12 +190,21 @@ test("monthly rules create unique ordinary expenses, retry safely and stop witho
     await expect(
       page.getByRole("region", { name: "Confirm recurring rule stop" }),
     ).toContainText("All existing documents");
+    await expect(
+      page
+        .getByRole("region", { name: "Confirm recurring rule stop" })
+        .locator("p")
+        .first(),
+    ).toBeFocused();
     await page
       .getByRole("button", { name: "Confirm stop rule", exact: true })
       .click();
     await expect(
       page.getByText("Monthly rule stopped.", { exact: false }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Add monthly expense", exact: true }),
+    ).toBeFocused();
     const stopped = await (await request.get("/api/dashboard?days=90")).json();
     expect(
       stopped.recurringExpenses.find(

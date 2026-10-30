@@ -463,6 +463,32 @@ accounting review workflows and Nordea's contractual/regulatory onboarding are r
 
 ## Tests and development
 
+### Keyboard access and interface feedback
+
+- **Skip to main content** is the first keyboard stop, including on mobile.
+- Activity tabs use Left/Right arrows (wrapping), Home/End, and a single Tab stop.
+  Tab past the CSV picker to focus the active table and scroll it horizontally.
+  Other wide tables have named, keyboard-focusable scrolling regions.
+- Document forms focus their first editable field. Closing/saving returns focus to
+  the initiating control when it still exists; cancelled/removed controls fall back
+  to the add-document button. Confirmation text is focused before destructive actions.
+- Payment reviews, monthly rules and statement previews move focus into the opened
+  content and restore a useful keyboard position when closed. Expected-date help is
+  a field description, not part of its name.
+- Save progress and successful actions use polite status announcements. Failed
+  actions expose an alert and focus the error while preserving the document draft.
+  Dashboard refresh failures retain the last successful view and offer Retry;
+  background polling does not move focus or clear unsaved form input.
+  Horizon/delay changes label the previous forecast as updating until the new
+  result arrives, rather than relabelling old totals as the requested horizon.
+- Muted labels/table metadata have stronger contrast, focus indicators are explicit,
+  and narrow screens retain controls while wide tables scroll within their panels.
+
+The browser suite checks these specific keyboard, focus, loading/error, contrast
+(4.5:1 for sampled normal-text labels) and 320px layout behaviors alongside financial
+regressions. This is focused accessibility coverage, not WCAG certification or a
+substitute for manual testing with screen readers across browsers.
+
 ```sh
 # Node 22.12+:
 cd frontend

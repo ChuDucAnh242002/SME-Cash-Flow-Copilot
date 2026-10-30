@@ -94,7 +94,7 @@ test("preview writes nothing; confirmation reconciles partial payments without a
     .click();
   await expect(
     page.getByRole("heading", { name: "Review before importing" }),
-  ).toBeVisible();
+  ).toBeFocused();
   await expect(
     page.getByRole("button", { name: "Confirm statement import" }),
   ).toBeDisabled();
@@ -190,6 +190,7 @@ test("duplicate preview is explicit, input changes invalidate it and changed tra
   await expect(page.getByRole("alert")).toContainText(
     "same ID has different details",
   );
+  await expect(page.getByRole("alert").locator("..")).toBeFocused();
   const after = await (await request.get("/api/dashboard")).json();
   expect(after.transactions).toHaveLength(3);
   expect(after.account.bookedBalance).toBe(5000);
@@ -222,6 +223,9 @@ test("statement form and preview fit mobile without page overflow", async ({
     fullPage: true,
   });
   await page.getByRole("button", { name: "Discard preview" }).click();
+  await expect(
+    page.getByRole("button", { name: "Preview statement", exact: true }),
+  ).toBeFocused();
   await expect(
     page.getByRole("heading", { name: "Review before importing" }),
   ).toHaveCount(0);

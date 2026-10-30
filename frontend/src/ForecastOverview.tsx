@@ -33,10 +33,22 @@ export function ForecastOverview({
   const statement = data.status.mode === "statement";
   const planning = data.planningBalance !== null;
   const hasOpeningBalance = !!data.account || planning;
+  const updating =
+    data.forecast.days !== days || data.forecast.incomeDelayDays !== delay;
 
   return (
     <>
-      <section className="metrics" aria-label="Financial summary">
+      {updating && (
+        <p className="message info" role="status">
+          Updating scenario... Previous forecast is shown until refresh
+          completes.
+        </p>
+      )}
+      <section
+        className="metrics"
+        aria-label="Financial summary"
+        aria-busy={updating}
+      >
         <article className="metric">
           <span>
             {statement ? "Statement closing balance" : "Booked bank balance"}
@@ -72,7 +84,7 @@ export function ForecastOverview({
             {hasOpeningBalance ? money(data.forecast.minimumBalance) : "--"}
           </strong>
           <small>
-            {days}-day outlook /{" "}
+            {data.forecast.days}-day outlook /{" "}
             {planning
               ? "PLANNING SCENARIO"
               : statement
@@ -81,7 +93,7 @@ export function ForecastOverview({
           </small>
         </article>
       </section>
-      <section className="forecast-grid">
+      <section className="forecast-grid" aria-busy={updating}>
         <article className="panel chart-panel">
           <div className="panel-heading">
             <div>

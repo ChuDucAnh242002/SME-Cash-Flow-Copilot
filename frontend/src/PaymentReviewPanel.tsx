@@ -43,6 +43,9 @@ export function PaymentReviewPanel({
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const confirmation = useRef<HTMLParagraphElement>(null);
+  const correctionButton = useRef<HTMLButtonElement>(null);
+  const errorMessage = useRef<HTMLDivElement>(null);
   const stale =
     !current || current.reviewRevision !== transaction.reviewRevision;
   const eligible = eligibleDocuments(transaction, documents);
@@ -57,6 +60,14 @@ export function PaymentReviewPanel({
   useEffect(() => {
     heading.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (confirming) confirmation.current?.focus();
+  }, [confirming]);
+
+  useEffect(() => {
+    if (error) errorMessage.current?.focus();
+  }, [error]);
 
   useEffect(() => {
     let active = true;
@@ -145,7 +156,12 @@ export function PaymentReviewPanel({
         </div>
       )}
       {error && (
-        <div className="message error" role="alert">
+        <div
+          className="message error"
+          role="alert"
+          ref={errorMessage}
+          tabIndex={-1}
+        >
           {error}
         </div>
       )}
@@ -218,6 +234,7 @@ export function PaymentReviewPanel({
             />
           </label>
           <button
+            ref={correctionButton}
             type="submit"
             className="primary"
             disabled={!validTarget || !reason.trim()}
@@ -232,7 +249,7 @@ export function PaymentReviewPanel({
           role="region"
           aria-label="Confirm payment correction"
         >
-          <p>
+          <p ref={confirmation} tabIndex={-1}>
             <strong>{actionLabels[action]}</strong>
             {action === "LINK" && chosen
               ? `: ${money(transaction.amount)} to ${chosen.counterparty} / ${chosen.reference}.`
@@ -259,7 +276,10 @@ export function PaymentReviewPanel({
           <button
             type="button"
             disabled={busy}
-            onClick={() => setConfirming(false)}
+            onClick={() => {
+              setConfirming(false);
+              window.setTimeout(() => correctionButton.current?.focus(), 0);
+            }}
           >
             Back to review
           </button>

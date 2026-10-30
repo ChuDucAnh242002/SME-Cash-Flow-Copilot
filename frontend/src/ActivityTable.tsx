@@ -26,6 +26,7 @@ export function ActivityTable({
       className="table-scroll"
       id="activity-table"
       role="tabpanel"
+      tabIndex={0}
       aria-labelledby={`${tab}-tab`}
     >
       {tab === "documents" ? (

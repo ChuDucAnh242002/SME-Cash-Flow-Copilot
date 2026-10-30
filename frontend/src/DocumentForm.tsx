@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { localToday } from "./format";
 import type { Document } from "./types";
 
@@ -20,8 +21,18 @@ export function DocumentForm({
   onSave: (input: DocumentFields) => void;
 }) {
   const matched = !!document && document.paidAmount > 0;
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    form.current
+      ?.querySelector<HTMLElement>(
+        "input:not(:disabled), select:not(:disabled)",
+      )
+      ?.focus();
+  }, []);
   return (
     <form
+      ref={form}
+      id="document-form"
       className="document-form"
       aria-label={document ? "Edit document" : "New document"}
       onSubmit={(event) => {
@@ -99,18 +110,22 @@ export function DocumentForm({
           disabled={busy}
         />
       </label>
-      <label>
-        Expected payment date
-        <input
-          name="expectedDate"
-          type="date"
-          defaultValue={document?.expectedDate ?? ""}
-          disabled={busy}
-        />
-        <small>
+      <div className="form-field">
+        <label htmlFor="document-expected-date">
+          Expected payment date
+          <input
+            id="document-expected-date"
+            aria-describedby="document-expected-date-help"
+            name="expectedDate"
+            type="date"
+            defaultValue={document?.expectedDate ?? ""}
+            disabled={busy}
+          />
+        </label>
+        <small id="document-expected-date-help">
           Optional. Used in the forecast; leaves the due date unchanged.
         </small>
-      </label>
+      </div>
       {matched && (
         <p className="form-note">
           Matched payments are preserved. Type and reference are locked; amount

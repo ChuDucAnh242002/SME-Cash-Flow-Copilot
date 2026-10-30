@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { request } from "./api";
 import { date, localToday, money } from "./format";
 import type { Dashboard, StatementPreview } from "./types";
@@ -23,6 +23,18 @@ export function StatementPanel({
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const previewHeading = useRef<HTMLHeadingElement>(null);
+  const feedback = useRef<HTMLDivElement>(null);
+  const previewButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (preview) previewHeading.current?.focus();
+  }, [preview]);
+
+  useEffect(() => {
+    if (error || notice) feedback.current?.focus();
+  }, [error, notice]);
 
   function invalidate() {
     setPreview(null);
@@ -33,6 +45,7 @@ export function StatementPanel({
 
   async function inspect(upload: FormData) {
     invalidate();
+    setProcessing(true);
     onBusyChange(true);
     try {
       const result = await request<StatementPreview>(
@@ -48,6 +61,7 @@ export function StatementPanel({
           : "Statement preview failed.",
       );
     } finally {
+      setProcessing(false);
       onBusyChange(false);
     }
   }
@@ -55,6 +69,7 @@ export function StatementPanel({
   async function confirm() {
     if (!preview || !acknowledged) return;
     onBusyChange(true);
+    setProcessing(true);
     setError("");
     try {
       const upload = new FormData();
@@ -78,6 +93,7 @@ export function StatementPanel({
       setPreview(null);
       setAcknowledged(false);
     } finally {
+      setProcessing(false);
       onBusyChange(false);
     }
   }
@@ -154,21 +170,30 @@ export function StatementPanel({
             <input name="file" type="file" accept=".csv,text/csv" required />
           </label>
         </fieldset>
-        <button className="primary" type="submit" disabled={busy}>
+        <button
+          ref={previewButton}
+          className="primary"
+          type="submit"
+          disabled={busy}
+        >
           Preview statement
         </button>
       </form>
-      <div aria-live="polite">
+      <div ref={feedback} tabIndex={-1}>
+        <p role="status">
+          {processing ? "Processing statement... Please wait." : notice}
+        </p>
         {error && (
           <div className="message error" role="alert">
             {error}
           </div>
         )}
-        {notice && <div className="message success">{notice}</div>}
       </div>
       {preview && (
         <div className="statement-preview" aria-label="Statement preview">
-          <h3>Review before importing</h3>
+          <h3 ref={previewHeading} tabIndex={-1}>
+            Review before importing
+          </h3>
           <p>
             {preview.result.statement.accountName} /{" "}
             {preview.result.statement.accountId}: closing balance{" "}
@@ -182,7 +207,12 @@ export function StatementPanel({
             retains previously imported transactions and leaves any planning
             override unchanged.
           </p>
-          <div className="table-scroll">
+          <div
+            className="table-scroll"
+            role="region"
+            aria-label="Statement preview transactions"
+            tabIndex={0}
+          >
             <table>
               <thead>
                 <tr>
@@ -227,7 +257,14 @@ export function StatementPanel({
             >
               Confirm statement import
             </button>
-            <button type="button" disabled={busy} onClick={invalidate}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                invalidate();
+                previewButton.current?.focus();
+              }}
+            >
               Discard preview
             </button>
           </div>

@@ -27,6 +27,33 @@ function App() {
   const [cancelling, setCancelling] = useState<Document | null>(null);
   const [reviewing, setReviewing] = useState<Transaction | null>(null);
   const generation = useRef(0);
+  const activityOrigin = useRef<HTMLElement | null>(null);
+  const addDocumentButton = useRef<HTMLButtonElement>(null);
+  const cancelHeading = useRef<HTMLParagraphElement>(null);
+  const actionError = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (
+      !showForm &&
+      !cancelling &&
+      !reviewing &&
+      !busy &&
+      activityOrigin.current
+    ) {
+      const origin = activityOrigin.current;
+      activityOrigin.current = null;
+      if (origin.isConnected && !origin.matches(":disabled")) origin.focus();
+      else addDocumentButton.current?.focus();
+    }
+  }, [showForm, cancelling, reviewing, busy]);
+
+  useEffect(() => {
+    if (cancelling) cancelHeading.current?.focus();
+  }, [cancelling]);
+
+  useEffect(() => {
+    if (error) actionError.current?.focus();
+  }, [error]);
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -85,25 +112,27 @@ function App() {
     data?.planningBalance !== null && data?.planningBalance !== undefined;
   const hasOpeningBalance = !!data?.account || planning;
 
+  function rememberActivityOrigin() {
+    const active = window.document.activeElement;
+    activityOrigin.current = active instanceof HTMLElement ? active : null;
+  }
+
   function editDocument(document: Document) {
+    rememberActivityOrigin();
     setEditing(document);
     setShowForm(true);
     setCancelling(null);
     setReviewing(null);
     setTab("documents");
-    window.setTimeout(
-      () =>
-        window.document
-          .getElementById("activity")
-          ?.scrollIntoView({ block: "start" }),
-      0,
-    );
   }
 
   return (
     <div className="layout">
+      <a className="skip-link" href="#overview">
+        Skip to main content
+      </a>
       <aside className="sidebar">
-        <a href="/" className="brand">
+        <a href="/" className="brand" aria-label="Cashflow home">
           <span className="brand-mark">cf</span> cashflow
           <span className="brand-dot">.</span>
         </a>
@@ -116,13 +145,13 @@ function App() {
           </div>
         </div>
         <nav aria-label="Main navigation">
-          <a href="#overview" className="nav-active">
+          <a href="#overview" className="nav-active" aria-label="Overview">
             Overview <span>01</span>
           </a>
-          <a href="#activity">
+          <a href="#activity" aria-label="Invoices and activity">
             Invoices & activity <span>02</span>
           </a>
-          <a href="#assumptions">
+          <a href="#assumptions" aria-label="How it works">
             How it works <span>03</span>
           </a>
         </nav>
@@ -136,7 +165,7 @@ function App() {
           <small>Spring Boot / Kafka / Kubernetes</small>
         </div>
       </aside>
-      <main id="overview">
+      <main id="overview" tabIndex={-1}>
         <header className="topbar">
           <span>BUSINESS FINANCE / OVERVIEW</span>
           <span className={`mode-badge ${demo ? "demo" : ""}`}>
@@ -168,12 +197,18 @@ function App() {
                 )
               }
             >
-              {busy ? "Working..." : "Sync bank account"}{" "}
-              <span aria-hidden="true">&rarr;</span>
+              Sync bank account <span aria-hidden="true">&rarr;</span>
             </button>
           )}
         </section>
-        <div aria-live="polite">
+        <div>
+          <div role="status" aria-live="polite" aria-atomic="true">
+            {busy ? (
+              <div className="message info">Working... Please wait.</div>
+            ) : (
+              notice && <div className="message success">{notice}</div>
+            )}
+          </div>
           {loadError && (
             <div className="message error" role="alert">
               {loadError} {data && "Showing the last successful dashboard."}
@@ -181,11 +216,15 @@ function App() {
             </div>
           )}
           {error && (
-            <div className="message error" role="alert">
+            <div
+              className="message error"
+              role="alert"
+              ref={actionError}
+              tabIndex={-1}
+            >
               {error}
             </div>
           )}
-          {notice && <div className="message success">{notice}</div>}
           {data?.status.syncError && (
             <div className="message error" role="alert">
               Last bank sync failed: {data.status.syncError}
@@ -203,7 +242,7 @@ function App() {
           )}
         </div>
         {!data ? (
-          <div className="panel empty">
+          <div className="panel empty" role="status">
             {loadError
               ? "The dashboard is unavailable."
               : "Loading your workspace..."}
@@ -326,12 +365,17 @@ function App() {
                   <h2>Invoices & activity</h2>
                 </div>
                 <button
+                  ref={addDocumentButton}
                   className="primary"
                   disabled={busy}
+                  aria-expanded={showForm}
+                  aria-controls={showForm ? "document-form" : undefined}
                   onClick={() => {
+                    if (!showForm) rememberActivityOrigin();
                     setShowForm(!showForm);
                     setEditing(null);
                     setCancelling(null);
+                    setReviewing(null);
                   }}
                 >
                   {showForm ? "Close form" : "+ Add invoice or expense"}
@@ -367,7 +411,7 @@ function App() {
                   role="region"
                   aria-label="Confirm document cancellation"
                 >
-                  <p>
+                  <p ref={cancelHeading} tabIndex={-1}>
                     Cancel{" "}
                     <strong>
                       {cancelling.counterparty} / {cancelling.reference}
@@ -424,11 +468,35 @@ function App() {
                 />
               )}
               <div className="activity-toolbar">
-                <div className="tabs" role="tablist" aria-label="Activity type">
+                <div
+                  className="tabs"
+                  role="tablist"
+                  aria-label="Activity type"
+                  onKeyDown={(event) => {
+                    if (
+                      !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                        event.key,
+                      )
+                    )
+                      return;
+                    event.preventDefault();
+                    const next =
+                      event.key === "Home"
+                        ? "documents"
+                        : event.key === "End"
+                          ? "transactions"
+                          : tab === "documents"
+                            ? "transactions"
+                            : "documents";
+                    setTab(next);
+                    window.document.getElementById(`${next}-tab`)?.focus();
+                  }}
+                >
                   <button
                     id="documents-tab"
                     role="tab"
                     aria-selected={tab === "documents"}
+                    tabIndex={tab === "documents" ? 0 : -1}
                     aria-controls="activity-table"
                     className={tab === "documents" ? "selected" : ""}
                     onClick={() => setTab("documents")}
@@ -439,6 +507,7 @@ function App() {
                     id="transactions-tab"
                     role="tab"
                     aria-selected={tab === "transactions"}
+                    tabIndex={tab === "transactions" ? 0 : -1}
                     aria-controls="activity-table"
                     className={tab === "transactions" ? "selected" : ""}
                     onClick={() => setTab("transactions")}
@@ -476,11 +545,19 @@ function App() {
                 busy={busy}
                 onEdit={editDocument}
                 onCancel={(document) => {
+                  rememberActivityOrigin();
                   setCancelling(document);
                   setShowForm(false);
                   setEditing(null);
+                  setReviewing(null);
                 }}
-                onReview={setReviewing}
+                onReview={(transaction) => {
+                  rememberActivityOrigin();
+                  setReviewing(transaction);
+                  setShowForm(false);
+                  setEditing(null);
+                  setCancelling(null);
+                }}
               />
               <div className="table-note">
                 Matches use payment reference, direction and remaining amount.
@@ -491,7 +568,12 @@ function App() {
             </section>
             <details className="panel forecast-detail" id="forecast-detail">
               <summary>Daily forecast & cash movements</summary>
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                role="region"
+                aria-label="Daily forecast movements"
+                tabIndex={0}
+              >
                 <table>
                   <thead>
                     <tr>
