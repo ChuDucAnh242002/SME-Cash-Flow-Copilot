@@ -23,6 +23,23 @@ Cancelled documents remain visible; deletion and reversal of matched payments ar
 
 ## Run locally
 
+For a recruiter walkthrough or repeatable synthetic session, use the
+[isolated demo guide](docs/demo.md). It starts a credential-free workspace on
+**http://localhost:8083**, ignores your `.env`, and offers an explicitly confirmed
+reset without touching statement/sandbox data:
+
+```sh
+# Node 22.12+ and Docker Compose required for this CLI.
+node scripts/demo.mjs up --build
+# Later: stop/resume without losing edits.
+node scripts/demo.mjs stop
+node scripts/demo.mjs up
+# Restore the synthetic baseline (deletes ONLY the dedicated demo's data).
+node scripts/demo.mjs reset --confirm-reset
+```
+
+The original manual startup below remains available on port 8080.
+
 Requires Docker Engine with Compose, approximately 4 GB available memory, and outbound
 access to Maven Central, npm and image registries. Java and Node are not required on the host.
 
