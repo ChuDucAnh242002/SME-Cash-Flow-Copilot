@@ -396,6 +396,14 @@ receipts are additionally delayed in scenarios, expenses are not. Past movements
 today. Unentered expenses and uncertain customer payment behaviour are not predicted.
 Dates use Europe/Helsinki.
 
+The frontend keeps polling, request ordering, notifications and mutation state in
+[`main.tsx`](frontend/src/main.tsx). [`ForecastOverview`](frontend/src/ForecastOverview.tsx)
+renders the summary, chart controls and insight; [`ActivityTable`](frontend/src/ActivityTable.tsx)
+renders document/payment rows and delegates actions back to the dashboard. Planning,
+statement imports, recurring rules and payment review remain focused panels. These
+are UI boundaries, not separate services or client-side copies of the forecast engine;
+Java remains responsible for forecast scheduling, reconciliation and horizon totals.
+
 Reconciliation matches normalized reference + direction and does not allocate more
 than a document's total. It rebuilds deterministically, so documents entered after
 a bank sync can still match historical transactions. Overpayments, missing references

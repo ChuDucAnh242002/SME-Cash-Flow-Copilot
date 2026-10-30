@@ -1,16 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { request } from "./api";
-import { ForecastChart } from "./ForecastChart";
-import { date, documentState, localToday, money } from "./format";
+import { date, money } from "./format";
 import type { Dashboard, Document, Transaction } from "./types";
 import { DocumentForm } from "./DocumentForm";
 import { PlanningPanel } from "./PlanningPanel";
 import { StatementPanel } from "./StatementPanel";
 import { PaymentReviewPanel } from "./PaymentReviewPanel";
-import { matchExplanation } from "./reconciliation";
 import { RecurringExpensesPanel } from "./RecurringExpensesPanel";
 import { ForecastExplanation } from "./ForecastExplanation";
+import { ActivityTable } from "./ActivityTable";
+import { ForecastOverview } from "./ForecastOverview";
 import "./style.css";
 
 function App() {
@@ -76,16 +76,6 @@ function App() {
     }
   }
 
-  const open =
-    data?.documents.filter(
-      (doc) => !doc.cancelled && doc.paidAmount < doc.amount,
-    ) ?? [];
-  const receivables = open
-    .filter((doc) => doc.kind === "INVOICE")
-    .reduce((sum, doc) => sum + doc.amount - doc.paidAmount, 0);
-  const payables = open
-    .filter((doc) => doc.kind === "EXPENSE")
-    .reduce((sum, doc) => sum + doc.amount - doc.paidAmount, 0);
   const stale =
     data?.status.lastSync &&
     Date.now() - new Date(data.status.lastSync).getTime() > 15 * 60 * 1000;
@@ -307,159 +297,14 @@ function App() {
                 </button>
               </div>
             )}
-            <section className="metrics" aria-label="Financial summary">
-              <article className="metric">
-                <span>
-                  {statement
-                    ? "Statement closing balance"
-                    : "Booked bank balance"}
-                </span>
-                <strong>
-                  {data.account ? money(data.account.bookedBalance) : "--"}
-                </strong>
-                <small>
-                  {data.account
-                    ? statement
-                      ? "Uploaded / not bank-verified / EUR"
-                      : "Last bank snapshot / EUR"
-                    : statement
-                      ? "Import required"
-                      : "Sync required"}
-                </small>
-              </article>
-              <article className="metric">
-                <span>Outstanding invoices</span>
-                <strong>{money(receivables)}</strong>
-                <small>
-                  {open.filter((doc) => doc.kind === "INVOICE").length} open
-                  receivables / all dates
-                </small>
-              </article>
-              <article className="metric">
-                <span>Planned outgoings</span>
-                <strong>{money(payables)}</strong>
-                <small>
-                  {open.filter((doc) => doc.kind === "EXPENSE").length} unpaid
-                  expenses / all dates
-                </small>
-              </article>
-              <article
-                className={`metric ${data.forecast.minimumBalance < 0 && hasOpeningBalance ? "risk" : ""}`}
-              >
-                <span>Lowest projected balance</span>
-                <strong>
-                  {hasOpeningBalance
-                    ? money(data.forecast.minimumBalance)
-                    : "--"}
-                </strong>
-                <small>
-                  {days}-day outlook /{" "}
-                  {planning
-                    ? "PLANNING SCENARIO"
-                    : statement
-                      ? "statement-based"
-                      : "bank-based"}
-                </small>
-              </article>
-            </section>
-            <section className="forecast-grid">
-              <article className="panel chart-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">LOOK AHEAD</p>
-                    <h2>Cash-flow forecast</h2>
-                    <small>
-                      {planning
-                        ? "Planning scenario"
-                        : statement
-                          ? "Statement-based forecast"
-                          : "Bank-based forecast"}{" "}
-                      / opening{" "}
-                      {hasOpeningBalance
-                        ? money(data.forecast.openingBalance)
-                        : "not set"}
-                    </small>
-                  </div>
-                  <label className="select-label">
-                    Horizon
-                    <select
-                      disabled={busy}
-                      value={days}
-                      onChange={(event) => setDays(Number(event.target.value))}
-                    >
-                      <option value={30}>30 days</option>
-                      <option value={60}>60 days</option>
-                      <option value={90}>90 days</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="scenario">
-                  <span className="legend">
-                    <i /> Projected closing balance
-                  </span>
-                  <label>
-                    Customer payment delay{" "}
-                    <select
-                      disabled={busy}
-                      aria-label="Customer payment delay"
-                      value={delay}
-                      onChange={(event) => setDelay(Number(event.target.value))}
-                    >
-                      <option value={0}>On time</option>
-                      <option value={7}>7 days late</option>
-                      <option value={14}>14 days late</option>
-                      <option value={30}>30 days late</option>
-                    </select>
-                  </label>
-                </div>
-                {hasOpeningBalance ? (
-                  <ForecastChart
-                    series={data.forecast.series}
-                    opening={data.forecast.openingBalance}
-                  />
-                ) : (
-                  <div className="chart-placeholder">
-                    {statement ? "Import a statement" : "Sync a bank snapshot"}{" "}
-                    or set a planning balance to see your forecast.
-                  </div>
-                )}
-                <div className="chart-footer">
-                  <span>EUR / Daily closing balance</span>
-                  <span>Scenario, not financial advice</span>
-                </div>
-              </article>
-              <aside
-                className={`insight ${data.forecast.firstShortfall && hasOpeningBalance ? "warning" : ""}`}
-              >
-                <p className="eyebrow">YOUR NEXT MOVE</p>
-                <span className="insight-symbol" aria-hidden="true">
-                  {data.forecast.firstShortfall && hasOpeningBalance
-                    ? "!"
-                    : "+"}
-                </span>
-                <h2>
-                  {!hasOpeningBalance
-                    ? "Start with the facts."
-                    : data.forecast.shortfallExplanation?.openingAlreadyNegative
-                      ? "Opening balance below zero."
-                      : data.forecast.firstShortfall
-                        ? `A gap ahead on ${date(data.forecast.firstShortfall)}.`
-                        : "Room to breathe."}
-                </h2>
-                <p>
-                  {!hasOpeningBalance
-                    ? `${statement ? "Import a statement" : "Sync an account"} or set a planning balance, then add your expected income and expenses.`
-                    : data.forecast.firstShortfall
-                      ? `Your scenario falls below zero, reaching ${money(data.forecast.minimumBalance)}. Review upcoming receipts and non-critical spending before that date.`
-                      : "No negative daily closing balance in this scenario. Late receipts or unrecorded expenses can still change the picture."}
-                </p>
-                <a href="#forecast-detail">
-                  Review daily cash movements{" "}
-                  <span aria-hidden="true">&rarr;</span>
-                </a>
-                <small>Rule-based insight / no AI-generated advice</small>
-              </aside>
-            </section>
+            <ForecastOverview
+              data={data}
+              days={days}
+              delay={delay}
+              busy={busy}
+              onDaysChange={setDays}
+              onDelayChange={setDelay}
+            />
             <ForecastExplanation
               forecast={data.forecast}
               documents={data.documents}
@@ -623,166 +468,20 @@ function App() {
                   />
                 </label>
               </div>
-              <div
-                className="table-scroll"
-                id="activity-table"
-                role="tabpanel"
-                aria-labelledby={`${tab}-tab`}
-              >
-                {tab === "documents" ? (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Customer / supplier</th>
-                        <th>Reference</th>
-                        <th>Due</th>
-                        <th>Amount</th>
-                        <th>Remaining</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.documents.map((doc) => (
-                        <tr key={doc.id}>
-                          <td>
-                            <strong>{doc.counterparty}</strong>
-                            <small>
-                              {doc.kind === "INVOICE"
-                                ? "Customer invoice"
-                                : "Planned expense"}
-                            </small>
-                            {doc.recurringExpenseId && (
-                              <small>
-                                Monthly occurrence /{" "}
-                                {doc.occurrenceMonth?.slice(0, 7)}
-                              </small>
-                            )}
-                          </td>
-                          <td className="mono">{doc.reference}</td>
-                          <td>
-                            {date(doc.dueDate)}
-                            {doc.expectedDate && (
-                              <small>Expected {date(doc.expectedDate)}</small>
-                            )}
-                          </td>
-                          <td>{money(doc.amount)}</td>
-                          <td>
-                            {doc.cancelled
-                              ? "--"
-                              : money(doc.amount - doc.paidAmount)}
-                          </td>
-                          <td>
-                            <span
-                              className={`status-pill ${doc.cancelled ? "cancelled" : doc.paidAmount >= doc.amount ? "settled" : doc.dueDate < localToday() ? "overdue" : ""}`}
-                            >
-                              {doc.cancelled
-                                ? "Cancelled"
-                                : documentState(doc.amount, doc.paidAmount)}
-                              {!doc.cancelled &&
-                                doc.paidAmount < doc.amount &&
-                                doc.dueDate < localToday() &&
-                                " / Overdue"}
-                            </span>
-                          </td>
-                          <td>
-                            {!doc.cancelled && (
-                              <div className="row-actions">
-                                <button
-                                  disabled={busy}
-                                  aria-label={`Edit ${doc.reference}`}
-                                  onClick={() => editDocument(doc)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  disabled={busy || doc.paidAmount > 0}
-                                  title={
-                                    doc.paidAmount > 0
-                                      ? "Matched documents cannot be cancelled"
-                                      : "Cancel this document"
-                                  }
-                                  aria-label={`Cancel ${doc.reference}`}
-                                  onClick={() => {
-                                    setCancelling(doc);
-                                    setShowForm(false);
-                                    setEditing(null);
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      {data.documents.length === 0 && (
-                        <tr>
-                          <td colSpan={7} className="empty">
-                            No documents yet. Add an invoice, import a CSV, or
-                            load the demo.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                ) : (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Counterparty</th>
-                        <th>Reference</th>
-                        <th>Booked</th>
-                        <th>Amount</th>
-                        <th>Reconciliation</th>
-                        <th>Review details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.transactions.map((tx) => (
-                        <tr key={`${tx.accountId}:${tx.externalId}`}>
-                          <td>
-                            <strong>{tx.counterparty}</strong>
-                            <small className="mono">{tx.externalId}</small>
-                          </td>
-                          <td className="mono">{tx.reference || "--"}</td>
-                          <td>{date(tx.bookingDate)}</td>
-                          <td className={tx.amount > 0 ? "positive" : ""}>
-                            {money(tx.amount)}
-                          </td>
-                          <td>
-                            <span
-                              className={`status-pill ${tx.documentId ? "settled" : ""}`}
-                            >
-                              {tx.documentId ? "Matched" : "Needs review"}
-                            </span>
-                          </td>
-                          <td>
-                            <small>{matchExplanation[tx.explanation]}</small>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              aria-label={`Review payment ${tx.externalId}`}
-                              onClick={() => setReviewing(tx)}
-                            >
-                              Review
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {data.transactions.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="empty">
-                            {statement
-                              ? "No statement transactions. Preview and import a CSV above."
-                              : "No bank transactions. Sync your account to import them."}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+              <ActivityTable
+                tab={tab}
+                documents={data.documents}
+                transactions={data.transactions}
+                statement={statement}
+                busy={busy}
+                onEdit={editDocument}
+                onCancel={(document) => {
+                  setCancelling(document);
+                  setShowForm(false);
+                  setEditing(null);
+                }}
+                onReview={setReviewing}
+              />
               <div className="table-note">
                 Matches use payment reference, direction and remaining amount.
                 Partial payments are supported; ambiguous or excessive payments
