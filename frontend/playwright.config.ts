@@ -12,6 +12,7 @@ export default defineConfig({
           "**/reconciliation.spec.ts",
           "**/recurring.spec.ts",
           "**/accessibility.spec.ts",
+          "**/processing.spec.ts",
         ],
   use: {
     baseURL: process.env.APP_URL ?? "http://127.0.0.1:8080",

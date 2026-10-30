@@ -78,6 +78,12 @@ test("reset requires explicit confirmation, rejects unknown arguments and never 
   assert.throws(() => parseCommand(["stop", "--confirm-reset"]));
   assert.throws(() => parseCommand(["up", "--build", "--build"]));
   assert.throws(() => parseCommand([]), /Usage/);
+  assert.throws(() => parseCommand(["check-recovery"]), /confirm-outage/);
+  assert.throws(() => parseCommand(["check-recovery", "--confirm-reset"]));
+  assert.deepEqual(parseCommand(["check-recovery", "--confirm-outage"]), {
+    command: "check-recovery",
+    build: false,
+  });
   assert.deepEqual(parseCommand(["reset", "--confirm-reset", "--build"]), {
     command: "reset",
     build: true,
@@ -95,8 +101,25 @@ test("unconfirmed reset exits before Docker is contacted", () => {
     env: { PATH: "" },
     encoding: "utf8",
   });
+
   assert.equal(result.status, 1);
   assert.match(result.stderr, /confirm-reset/);
+  assert.doesNotMatch(result.stderr, /ENOENT/);
+});
+
+test("unconfirmed recovery check exits before Docker is contacted", () => {
+  const args = composeArgs([]);
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/demo.mjs", "check-recovery"],
+    {
+      cwd: args[args.indexOf("--project-directory") + 1],
+      env: { PATH: "" },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /confirm-outage/);
   assert.doesNotMatch(result.stderr, /ENOENT/);
 });
 

@@ -75,6 +75,13 @@ export interface Dashboard {
     eventError: string | null;
     statementDate: string | null;
     recurrenceError: string | null;
+    pipeline: {
+      unpublishedEvents: number;
+      awaitingReconciliation: number;
+      oldestPendingAt: string | null;
+      failedPartitions: number;
+      consumerError: string | null;
+    };
   };
   account: {
     id: string;

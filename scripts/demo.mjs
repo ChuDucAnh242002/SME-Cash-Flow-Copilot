@@ -114,7 +114,7 @@ function checkIsolation() {
 
 async function dashboard() {
   const response = await fetch(`${origin}/api/dashboard`, {
-    headers: { authorization },
+    headers: { authorization, connection: "close" },
     signal: AbortSignal.timeout(10000),
   });
   assert.equal(
@@ -135,6 +135,128 @@ async function dashboard() {
   return data;
 }
 
+async function waitFor(description, check, seconds = 120) {
+  for (let attempt = 0; attempt < seconds; attempt++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(
+    `Timed out waiting for ${description}. Check demo status and logs; no data was reset.`,
+  );
+}
+
+async function checkRecovery() {
+  let before = await dashboard();
+  assert.equal(
+    before.status.pipeline.failedPartitions,
+    0,
+    "Resolve consumer failures before this check.",
+  );
+  await waitFor(
+    "initial reconciliation",
+    async () => (await dashboard()).status.pendingEvents === 0,
+  );
+  before = await dashboard();
+  assert.ok(
+    before.account,
+    "Initialize the synthetic demo with up before checking recovery.",
+  );
+  console.log(
+    "Pausing ONLY the dedicated demo broker, then syncing synthetic facts. No data will be reset.",
+  );
+  let brokerPaused = false;
+  try {
+    compose(["pause", "kafka"]);
+    brokerPaused = true;
+    const csrfResponse = await fetch(`${origin}/api/csrf`, {
+      headers: { authorization, connection: "close" },
+      signal: AbortSignal.timeout(10000),
+    });
+    assert.equal(csrfResponse.status, 200);
+    const csrf = await csrfResponse.json();
+    const response = await fetch(`${origin}/api/bank/sync`, {
+      method: "POST",
+      headers: {
+        authorization,
+        connection: "close",
+        cookie: csrfResponse.headers
+          .getSetCookie()
+          .map((value) => value.split(";")[0])
+          .join("; "),
+        [csrf.headerName]: csrf.token,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    assert.equal(response.status, 200, await response.text());
+    await waitFor(
+      "visible durable publication failure",
+      async () => {
+        const { status } = await dashboard();
+        return status.pipeline.unpublishedEvents > 0 && !!status.eventError;
+      },
+      60,
+    );
+    console.log(
+      "Publication failure is visible. Restarting the demo app while Kafka remains down.",
+    );
+    compose(["restart", "app"]);
+    await waitFor("app readiness with broker down", async () => {
+      try {
+        return (
+          await fetch(`${origin}/actuator/health/readiness`, {
+            headers: { connection: "close" },
+            signal: AbortSignal.timeout(2000),
+          })
+        ).ok;
+      } catch (error) {
+        if (error instanceof TypeError || error.name === "TimeoutError")
+          return false;
+        throw error;
+      }
+    });
+    const retained = await dashboard();
+    assert.ok(retained.status.pipeline.unpublishedEvents > 0);
+    assert.ok(retained.status.eventError);
+    console.log(
+      "PASS: pending event and publication error survived app restart; app/database remain ready.",
+    );
+  } finally {
+    console.log(
+      "Restoring the dedicated demo broker, including after a failed check.",
+    );
+    if (brokerPaused) compose(["unpause", "kafka"]);
+  }
+  await waitFor("automatic reconciliation recovery", async () => {
+    const { status } = await dashboard();
+    return (
+      status.pendingEvents === 0 &&
+      status.eventError === null &&
+      status.pipeline.failedPartitions === 0
+    );
+  });
+  const after = await dashboard();
+  for (const key of [
+    "documents",
+    "transactions",
+    "recurringExpenses",
+    "planningBalance",
+    "forecast",
+  ]) {
+    assert.deepEqual(
+      after[key],
+      before[key],
+      `${key} changed during recovery.`,
+    );
+  }
+  if (before.account) {
+    assert.equal(after.account.id, before.account.id);
+    assert.equal(after.account.bookedBalance, before.account.bookedBalance);
+  }
+  console.log(
+    "PASS: automatic broker recovery drained the backlog; financial state and forecast are unchanged.",
+  );
+}
+
 function verify() {
   execFileSync(process.execPath, [join(root, "scripts/smoke.mjs")], {
     cwd: root,
@@ -151,19 +273,27 @@ function verify() {
 export function parseCommand(args) {
   const [command, ...options] = args;
   assert.ok(
-    ["up", "stop", "reset", "status", "verify"].includes(command),
-    "Usage: node scripts/demo.mjs up [--build] | stop | status | verify | reset --confirm-reset [--build]",
+    ["up", "stop", "reset", "status", "verify", "check-recovery"].includes(
+      command,
+    ),
+    "Usage: node scripts/demo.mjs up [--build] | stop | status | verify | reset --confirm-reset [--build] | check-recovery --confirm-outage",
   );
   const allowed =
     command === "up"
       ? ["--build"]
       : command === "reset"
         ? ["--confirm-reset", "--build"]
-        : [];
+        : command === "check-recovery"
+          ? ["--confirm-outage"]
+          : [];
   assert.ok(
     options.every((option) => allowed.includes(option)) &&
       new Set(options).size === options.length,
     "Unknown or repeated option.",
+  );
+  assert.ok(
+    command !== "check-recovery" || options.includes("--confirm-outage"),
+    "Recovery check interrupts ONLY the dedicated demo broker and app. Repeat with check-recovery --confirm-outage to confirm.",
   );
   assert.ok(
     command !== "reset" || options.includes("--confirm-reset"),
@@ -175,6 +305,10 @@ export function parseCommand(args) {
 export async function main(args) {
   const { command, build } = parseCommand(args);
   checkIsolation();
+  if (command === "check-recovery") {
+    await checkRecovery();
+    return;
+  }
   if (command === "stop") {
     compose(["down"]);
     console.log("Demo stopped. Data retained; run up to resume.");

@@ -427,6 +427,85 @@ a bank sync can still match historical transactions. Overpayments, missing refer
 and unmatched transactions need review. During Kafka lag, unmatched documents can
 temporarily double-count expected cash movements; the dashboard shows pending events.
 
+## Reliability and processing diagnostics
+
+Open **Processing diagnostics** below the daily forecast. It separates events waiting
+for Kafka publication from published events awaiting reconciliation, shows the oldest
+pending event and last successful reconciliation, and counts failed consumer partitions.
+The existing pending-event indicator remains the total **unprocessed local outbox events**.
+A failing foreign/malformed Kafka record can block a partition even when that total is
+zero, so consumer failures are reported independently and also shown as an alert.
+
+Migration **V6** adds `consumer_failure`, keyed by topic/partition, with the blocking
+offset, failure count and first/last failure timestamps. It contains no event payload,
+exception message, account data or credentials. Existing financial records are unchanged.
+Successful processing clears a failure only for the same topic/partition at that offset
+or later; processing an earlier record does not claim that the failure recovered.
+Failure metadata survives restarts; it describes the last observed problem, not an
+active probe of Kafka connectivity.
+
+- Consumer errors retry every three seconds, including exception types Spring Kafka
+  otherwise classifies as fatal. There is **no automatic discard, offset skip or dead
+  letter recovery**. Malformed/unsupported records intentionally block their partition.
+- Reconciliation, the processed-event marker and clearing recovered diagnostics commit
+  together. A database failure rolls them all back; retry/replay cannot duplicate an
+  allocation or manual review audit entry.
+- Outbox publication requires broker acknowledgement before marking the event published.
+  Timeouts retain the event for retry. A crash or uncertain acknowledgement can publish
+  the same event again; consumer idempotency is still required.
+- Readiness means app + database availability, **not Kafka connectivity**. Saved plans
+  remain accessible during a broker outage. A caught-up queue does not prove that the
+  bank snapshot is fresh or that an idle Kafka connection is working.
+  Cold startup still requires a resolvable Kafka bootstrap address; if Docker removes
+  the broker's DNS name when its container stops, restore the broker before starting
+  the app. Existing PostgreSQL facts and pending events remain durable.
+
+### Operator recovery
+
+1. Read the dashboard's sync/publication/consumer/recurrence errors. Do not re-import,
+   reset financial data or delete outbox/processed-event rows to make warnings disappear.
+2. For publication backlog, restore the broker/network and wait for automatic retry.
+   For consumer failures, inspect server retry logs by **topic, partition and offset**;
+   they identify the record without logging its payload in the application retry message.
+3. Fix a transient database problem or deploy code supporting the expected schema, then
+   let Kafka redeliver. Repeated unsupported records require operator investigation;
+   this prototype provides no safe automated way to remove or skip them.
+4. Verify pending stages drain, failed partitions clear, and financial matches/forecast
+   remain correct. If Kafka retention expired or offsets/data were manually changed,
+   investigate explicitly; the prototype has no automatic lost-event repair.
+
+For a reproducible **synthetic-demo-only** outage and restart check:
+
+```sh
+node scripts/demo.mjs check-recovery --confirm-outage
+```
+
+It confirms the dedicated project/mode, pauses its broker (retaining DNS), syncs synthetic facts, checks
+the durable publication warning, restarts the app with Kafka down, restores the broker
+in `finally`, and verifies automatic recovery without changing documents, decisions,
+rules or the forecast. It never resets data or targets the statement/sandbox projects.
+If the process/host is forcibly killed, `finally` cannot run: use
+`docker unpause sme-cashflow-recruiter-demo-kafka-1` if it is paused, then
+`node scripts/demo.mjs up` and inspect diagnostics.
+Run on an initialized, caught-up demo; avoid crossing Helsinki midnight during the check.
+
+### Metrics
+
+`GET /actuator/metrics` and individual metric URLs require the normal owner authentication.
+Only minimal `/actuator/health/**` responses remain public. The application adds:
+
+- `cashflow.events.published` — acknowledged outbox publications.
+- `cashflow.events.publication.failures` — failed publication attempts saved for retry.
+- `cashflow.events.processed` — newly committed reconciliations.
+- `cashflow.events.duplicates` — duplicate deliveries safely ignored.
+- `cashflow.events.consumer.failures` — recorded failed delivery attempts.
+
+These are **per-process counters**, updated after database commit and reset on app
+restart. They have no account/event-ID tags and are not an audit ledger. Persistent
+queue/failure state comes from the authenticated dashboard, not these counters.
+This uses the existing Actuator/Micrometer stack; no public metrics endpoint, Prometheus
+server, tracing backend, alert routing or log aggregation is installed.
+
 ## Kubernetes / k3s
 
 The [Kustomize manifests](deploy/k8s) are a **single-node development deployment**:

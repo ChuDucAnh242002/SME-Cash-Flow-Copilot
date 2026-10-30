@@ -64,6 +64,7 @@ class FinanceIntegrationTest {
             store.jdbc().update("DELETE FROM account");
             store.jdbc().update("DELETE FROM outbox");
             store.jdbc().update("DELETE FROM processed_event");
+            store.jdbc().update("DELETE FROM consumer_failure");
             store.jdbc().update("UPDATE workspace SET planning_balance=NULL,last_sync=NULL,sync_error=NULL,last_reconciled=NULL,recurrence_error=NULL");
         });
     }

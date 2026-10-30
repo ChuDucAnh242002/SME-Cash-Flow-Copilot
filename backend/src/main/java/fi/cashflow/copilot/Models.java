@@ -118,7 +118,10 @@ public final class Models {
                            BigDecimal expectedReceipts, BigDecimal plannedOutgoings, BigDecimal closingBalance,
                            ShortfallExplanation shortfallExplanation) {}
     public record Status(String mode, Instant lastSync, String syncError, Instant lastReconciled,
-                         long pendingEvents, String eventError, LocalDate statementDate, String recurrenceError) {}
+                         long pendingEvents, String eventError, LocalDate statementDate, String recurrenceError,
+                         PipelineStatus pipeline) {}
+    public record PipelineStatus(long unpublishedEvents, long awaitingReconciliation, Instant oldestPendingAt,
+                                 long failedPartitions, String consumerError) {}
     public record Dashboard(Status status, Account account, BigDecimal planningBalance, List<Document> documents,
                             List<BankTransaction> transactions, Forecast forecast, List<RecurringExpense> recurringExpenses) {}
     public record FinanceEvent(UUID id, String type, int schemaVersion) {}

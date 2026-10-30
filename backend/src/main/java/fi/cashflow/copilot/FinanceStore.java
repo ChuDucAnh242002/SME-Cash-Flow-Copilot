@@ -104,10 +104,22 @@ public class FinanceStore {
                 SELECT w.*,(SELECT count(*) FROM outbox o LEFT JOIN processed_event p ON p.id=o.id
                   WHERE p.id IS NULL) AS pending,
                 (SELECT last_error FROM outbox WHERE published_at IS NULL AND last_error IS NOT NULL
-                  ORDER BY created_at LIMIT 1) AS event_error FROM workspace w WHERE id=1
+                  ORDER BY created_at LIMIT 1) AS event_error,
+                (SELECT count(*) FROM outbox o LEFT JOIN processed_event p ON p.id=o.id
+                  WHERE p.id IS NULL AND o.published_at IS NULL) AS unpublished,
+                (SELECT count(*) FROM outbox o LEFT JOIN processed_event p ON p.id=o.id
+                  WHERE p.id IS NULL AND o.published_at IS NOT NULL) AS awaiting,
+                (SELECT min(o.created_at) FROM outbox o LEFT JOIN processed_event p ON p.id=o.id
+                  WHERE p.id IS NULL) AS oldest_pending,
+                (SELECT count(*) FROM consumer_failure) AS failed_partitions
+                FROM workspace w WHERE id=1
                 """, (rs, row) -> new Status(rs.getString("bank_mode"), instant(rs, "last_sync"),
                 rs.getString("sync_error"), instant(rs, "last_reconciled"), rs.getLong("pending"), rs.getString("event_error"),
-                rs.getObject("statement_date", LocalDate.class), rs.getString("recurrence_error")));
+                rs.getObject("statement_date", LocalDate.class), rs.getString("recurrence_error"),
+                new PipelineStatus(rs.getLong("unpublished"), rs.getLong("awaiting"), instant(rs, "oldest_pending"),
+                        rs.getLong("failed_partitions"), rs.getLong("failed_partitions") > 0
+                        ? "Payment reconciliation failed. The affected Kafka partition is retained for retry. Check processing diagnostics and server logs."
+                        : null)));
     }
 
     public void lock() { jdbc.queryForObject("SELECT id FROM workspace WHERE id=1 FOR UPDATE", Integer.class); }

@@ -25,6 +25,7 @@ node scripts/demo.mjs stop                 # Data retained
 node scripts/demo.mjs up                   # Resume existing session
 node scripts/demo.mjs reset --confirm-reset # Delete demo data and seed again
 node scripts/demo.mjs verify               # Check the baseline before presenting
+node scripts/demo.mjs check-recovery --confirm-outage # Interrupt demo broker/app, verify recovery
 ```
 
 Use `up --build` after changing source code. Reset reuses the built image unless
@@ -35,6 +36,13 @@ synthetic bank facts, so it is a baseline check, not a read-only health probe.
 After making demo edits, `verify` may fail intentionally: reset before presenting again.
 If startup or baseline verification fails, the command exits nonzero; inspect its
 error instead of assuming the demo is ready. `status` shows container health.
+The recovery check is optional and takes several minutes. It verifies a saved outbox
+event survives app restart with Kafka paused (DNS still resolvable), then restores the broker and checks automatic
+reconciliation. It preserves plans and decisions, and restores Kafka even after an
+ordinary check failure. A killed process cannot run cleanup: run
+`docker unpause sme-cashflow-recruiter-demo-kafka-1` if paused, then use `up` to restore the
+stack. Cold startup with an unresolvable broker DNS name requires restoring Kafka first.
+See [processing diagnostics and recovery](../README.md#reliability-and-processing-diagnostics).
 
 Isolation is fixed in the CLI:
 

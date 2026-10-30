@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { ActivityTable } from "./ActivityTable";
 import { ForecastOverview } from "./ForecastOverview";
+import { ProcessingPanel } from "./ProcessingPanel";
 import { money } from "./format";
 import type { Dashboard, Document, Transaction } from "./types";
 
@@ -41,6 +42,13 @@ const dashboard: Dashboard = {
     eventError: null,
     statementDate: null,
     recurrenceError: null,
+    pipeline: {
+      unpublishedEvents: 0,
+      awaitingReconciliation: 0,
+      oldestPendingAt: null,
+      failedPartitions: 0,
+      consumerError: null,
+    },
   },
   account: null,
   documents: [],
@@ -201,6 +209,7 @@ describe("activity tables", () => {
         { ...document, id: "cancelled", cancelled: true },
       ],
     });
+
     expect(html).toContain('aria-labelledby="documents-tab"');
     expect(html).toContain("Partially paid / Overdue");
     expect(html).toContain("Monthly occurrence / 2026-10");
@@ -249,5 +258,46 @@ describe("activity tables", () => {
     expect(activity({ tab: "transactions" })).toContain(
       "No bank transactions. Sync your account to import them.",
     );
+  });
+});
+
+describe("processing diagnostics", () => {
+  it("does not claim idle Kafka connectivity or a fresh bank snapshot", () => {
+    const html = renderToStaticMarkup(
+      <ProcessingPanel status={dashboard.status} />,
+    );
+    expect(html).toContain("Caught up");
+    expect(html).toContain("does not prove");
+    expect(html).toContain("None");
+    expect(html).toContain("Not yet run");
+  });
+
+  it("distinguishes publication backlog from failed consumer partitions", () => {
+    const status = {
+      ...dashboard.status,
+      pendingEvents: 3,
+      pipeline: {
+        ...dashboard.status.pipeline,
+        unpublishedEvents: 2,
+        awaitingReconciliation: 1,
+        oldestPendingAt: "2026-10-30T10:00:00Z",
+      },
+    };
+    const pending = renderToStaticMarkup(<ProcessingPanel status={status} />);
+    expect(pending).toContain("Catching up");
+    expect(pending).toContain("Waiting to publish");
+    expect(pending).toContain("Published, awaiting reconciliation");
+    expect(pending).toContain("Helsinki");
+    const failed = renderToStaticMarkup(
+      <ProcessingPanel
+        status={{
+          ...status,
+          pendingEvents: 0,
+          pipeline: { ...status.pipeline, failedPartitions: 1 },
+        }}
+      />,
+    );
+    expect(failed).toContain("Retrying a failure");
+    expect(failed).toContain("no automatic discard");
   });
 });

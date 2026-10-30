@@ -41,6 +41,7 @@ jobs:
       - run: node scripts/demo.mjs up && node scripts/demo.mjs verify
       - run: node scripts/demo.mjs stop && node scripts/demo.mjs up && node scripts/demo.mjs verify
       - run: node scripts/demo.mjs reset --confirm-reset && node scripts/demo.mjs verify
+      - run: node scripts/demo.mjs check-recovery --confirm-outage
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -11,6 +11,7 @@ import { RecurringExpensesPanel } from "./RecurringExpensesPanel";
 import { ForecastExplanation } from "./ForecastExplanation";
 import { ActivityTable } from "./ActivityTable";
 import { ForecastOverview } from "./ForecastOverview";
+import { ProcessingPanel } from "./ProcessingPanel";
 import "./style.css";
 
 function App() {
@@ -238,6 +239,12 @@ function App() {
           {data?.status.recurrenceError && (
             <div className="message error" role="alert">
               {data.status.recurrenceError}
+            </div>
+          )}
+          {data?.status.pipeline.consumerError && (
+            <div className="message error" role="alert">
+              {data.status.pipeline.consumerError}{" "}
+              <a href="#processing">Processing diagnostics</a>
             </div>
           )}
         </div>
@@ -606,6 +613,7 @@ function App() {
                 </table>
               </div>
             </details>
+            <ProcessingPanel status={data.status} />
             <details className="panel assumptions" id="assumptions">
               <summary>
                 Transparent by design: assumptions & limitations

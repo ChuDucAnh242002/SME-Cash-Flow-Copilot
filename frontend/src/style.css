@@ -846,15 +846,23 @@ td small {
   font-size: 12px;
 }
 .forecast-detail,
-.assumptions {
+.assumptions,
+.processing-panel {
   margin-top: 20px;
   font-size: 12px;
 }
 .forecast-detail summary,
-.assumptions summary {
+.assumptions summary,
+.processing-panel summary {
   cursor: pointer;
   padding: 18px 24px;
   font-weight: 550;
+}
+.processing-content {
+  padding: 0 24px 24px;
+}
+.processing-content p {
+  margin-top: 12px;
 }
 .assumptions ul {
   padding: 0 35px 18px 43px;
