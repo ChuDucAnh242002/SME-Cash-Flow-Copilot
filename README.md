@@ -238,6 +238,69 @@ To stop without losing statement data:
 docker compose -p sme-cashflow-statements -f compose.yaml -f compose.statement.yaml down
 ```
 
+## Monthly recurring expenses
+
+Open **Monthly recurring expenses → Add monthly expense**. Enter a supplier/description,
+positive monthly EUR amount, first due date and optional inclusive last due date.
+First due dates must be today or within five years; add historical expenses individually.
+Only monthly **expenses** are supported—not recurring invoices, weekly schedules,
+automatic tax calculations, or inferred obligations.
+
+- Generation immediately creates ordinary expense documents from the first due date
+  through **today + 89 days**, covering the longest forecast horizon. A scheduler extends
+  this rolling window every minute and catches up missed months after downtime. Newly
+  generated overdue amounts land today in the forecast, like other overdue documents;
+  review missed obligations rather than assuming they were paid.
+- The original day is retained: January 31 → February 28/29 → March 31. An April 30
+  start means May 30, not May 31. An end date includes only occurrences due on/before it.
+- Every occurrence has a unique `REC-<rule UUID>-YYYY-MM` reference and a persisted
+  rule/month identity. Retries, concurrent generators, restarts, changing due dates
+  and cancelling individual occurrences do not generate that month twice.
+  Do not reuse the `REC-` reference prefix for unrelated documents.
+- A create request includes a client-generated `requestId`. Repeating the same ID/details
+  succeeds without creating another rule; different details with that ID return 409.
+  Different IDs mean different rules: check for pre-existing plans to avoid modelling
+  the same rent/salary twice. There is no semantic duplicate-obligation detection.
+- Generated documents are labelled **Monthly occurrence** and use existing edits,
+  expected dates, cancellation and payment review. Their type stays EXPENSE. A unique
+  real payment reference may be entered per occurrence; a bank's repeated monthly
+  reference needs manual linking to the correct occurrence.
+- **Stop rule** requires confirmation and a revision. It stops only future generation,
+  retaining **all** existing occurrences, including already generated future expenses.
+  Cancel unwanted unpaid occurrences individually. Paid cancellation/amount safeguards
+  remain enforced. Stop is irreversible in this version; series-wide edits/resume are
+  deliberately deferred.
+- Generation, cursor updates and an outbox event commit atomically under the workspace
+  lock. Reference conflicts roll back the entire generation and scheduled failures
+  appear on the dashboard. Resolve conflicting references and allow the next retry.
+  Kafka handles payment matching as before; no bank facts or planning override change.
+- A rule marked **Fully generated** has reached its end date; its documents are not
+  necessarily paid. Stopped/ended rules remain visible for context.
+
+## Explain a cash shortage
+
+**Cash breakdown** shows exact horizon-only totals:
+
+`opening balance + expected receipts - planned expenses = projected closing balance`
+
+These are unpaid active documents scheduled in the selected horizon, after expected-date
+and invoice-delay assumptions. The all-dates invoice/outgoing cards can include later
+documents and therefore differ. Cancelled and fully paid documents are excluded.
+Historical account transactions are already included in the opening balance, not added again.
+
+When a first negative daily closing balance occurs, the explanation shows the balance
+before that day, its receipts/outgoings and closing balance. Expand **Documents through
+the first shortage** for earlier movements and first-shortage-day documents. This is a
+cumulative explanation, not a claim that one invoice alone caused a shortage. **Adjust
+expected date** opens the actual document form; edits save workspace-wide and leave the
+contractual due date unchanged unless you explicitly edit it.
+
+An already-negative opening is identified separately—even if today's receipts recover
+the closing balance. The first-shortage closing balance may differ from the forecast
+minimum reached later. These are daily closing projections, not intraday liquidity
+guarantees or permission to delay contractual payments. Pending reconciliation can
+change the breakdown; without a bank/statement/planning opening, it is not shown as usable.
+
 ## Payment reconciliation review
 
 Open **Bank transactions** (or **Statement transactions**) and select **Review**.
@@ -396,6 +459,10 @@ partial matching and exact forecasts without double-counting historical payments
 Payment-review tests cover reason codes, authenticated audit attribution, manual
 priority, unlink/resume, stale and competing corrections, over-allocation prevention,
 Kafka replay and protected document edits.
+Recurring-expense tests cover short months/leap years, inclusive ends, catch-up,
+idempotent/concurrent generation, retained edits/cancellations, paid guards, stopped
+rules and explicit atomic generation failures. Forecast tests assert exact horizon
+totals and first-shortage explanations, including a negative opening recovered today.
 The integration test uses **real PostgreSQL via Testcontainers and embedded Kafka**,
 covering persistence, duplicate syncs, event redelivery, full/partial reconciliation,
 forecast amounts, planning overrides, expected dates, cancellation, stale-write and
@@ -496,6 +563,8 @@ and session cookie obtained from `GET /api/csrf`.
 | PUT | `/api/documents/{id}` | Edit using `{document: {...}, revision: n}` |
 | POST | `/api/documents/{id}/cancel` | Cancel using `{revision: n}` |
 | PUT | `/api/planning` | Save `{openingBalance: amount}`; `null` clears override |
+| POST | `/api/recurring-expenses` | `{requestId, counterparty, amount, firstDueDate, endDate?}`; monthly expenses with idempotent request ID |
+| POST | `/api/recurring-expenses/{id}/stop` | `{revision}`; stop generating, retain existing documents |
 | POST | `/api/documents/import` | Multipart `file` CSV import |
 | POST | `/api/statements/preview` | Statement-only read-only preview; multipart `file`, `accountId`, `accountName`, `closingBalance`, `closingDate` |
 | POST | `/api/statements/import` | Same multipart fields plus preview `revision`; atomically import and update closing balance |
@@ -520,6 +589,13 @@ matching. Dashboard transactions now include `matchMode` (`AUTO`, `MANUAL`, `EXC
 `reviewRevision` and an `explanation` code. A decision needs the current payment revision;
 `documentId` is required only for `LINK`, and must be omitted/null for `UNLINK`/`RESUME`.
 Unknown payments/history queries return HTTP 404. Bank account balances are unchanged.
+Migration V5 adds monthly rules, document occurrence provenance and `status.recurrenceError`.
+It does not create rules or modify existing financial facts. Dashboard `recurringExpenses`
+includes `nextMonth`, computed `nextDueDate`, stopped state and revision; documents include
+nullable `recurringExpenseId`/`occurrenceMonth`. Forecasts include `expectedReceipts`,
+positive `plannedOutgoings`, `closingBalance` and nullable `shortfallExplanation`.
+The explanation contains date, negative-opening flag, before-day balance, same-day
+receipts/outgoings/closing and dated document contributions through that day.
 
 Validation errors return HTTP 400, conflicts 409 and bank integration failures 502,
 using problem details. Browser/server errors never turn into a successful empty bank sync.

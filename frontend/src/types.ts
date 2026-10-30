@@ -10,6 +10,19 @@ export interface Document {
   expectedDate: string | null;
   cancelled: boolean;
   revision: number;
+  recurringExpenseId: string | null;
+  occurrenceMonth: string | null;
+}
+export interface RecurringExpense {
+  id: string;
+  counterparty: string;
+  amount: number;
+  firstDueDate: string;
+  endDate: string | null;
+  nextMonth: string;
+  nextDueDate: string;
+  stopped: boolean;
+  revision: number;
 }
 export interface Transaction {
   accountId: string;
@@ -61,6 +74,7 @@ export interface Dashboard {
     pendingEvents: number;
     eventError: string | null;
     statementDate: string | null;
+    recurrenceError: string | null;
   };
   account: {
     id: string;
@@ -72,6 +86,7 @@ export interface Dashboard {
   documents: Document[];
   planningBalance: number | null;
   transactions: Transaction[];
+  recurringExpenses: RecurringExpense[];
   forecast: {
     days: number;
     incomeDelayDays: number;
@@ -80,6 +95,23 @@ export interface Dashboard {
     firstShortfall: string | null;
     series: ForecastDay[];
     assumptions: string[];
+    expectedReceipts: number;
+    plannedOutgoings: number;
+    closingBalance: number;
+    shortfallExplanation: {
+      date: string;
+      openingAlreadyNegative: boolean;
+      balanceBeforeDay: number;
+      receipts: number;
+      outgoings: number;
+      closingBalance: number;
+      contributions: {
+        date: string;
+        documentId: string;
+        label: string;
+        amount: number;
+      }[];
+    } | null;
   };
 }
 

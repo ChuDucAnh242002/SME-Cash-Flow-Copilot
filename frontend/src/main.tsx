@@ -9,6 +9,8 @@ import { PlanningPanel } from "./PlanningPanel";
 import { StatementPanel } from "./StatementPanel";
 import { PaymentReviewPanel } from "./PaymentReviewPanel";
 import { matchExplanation } from "./reconciliation";
+import { RecurringExpensesPanel } from "./RecurringExpensesPanel";
+import { ForecastExplanation } from "./ForecastExplanation";
 import "./style.css";
 
 function App() {
@@ -92,6 +94,21 @@ function App() {
   const planning =
     data?.planningBalance !== null && data?.planningBalance !== undefined;
   const hasOpeningBalance = !!data?.account || planning;
+
+  function editDocument(document: Document) {
+    setEditing(document);
+    setShowForm(true);
+    setCancelling(null);
+    setReviewing(null);
+    setTab("documents");
+    window.setTimeout(
+      () =>
+        window.document
+          .getElementById("activity")
+          ?.scrollIntoView({ block: "start" }),
+      0,
+    );
+  }
 
   return (
     <div className="layout">
@@ -187,6 +204,11 @@ function App() {
           {data?.status.eventError && (
             <div className="message error" role="alert">
               {data.status.eventError}
+            </div>
+          )}
+          {data?.status.recurrenceError && (
+            <div className="message error" role="alert">
+              {data.status.recurrenceError}
             </div>
           )}
         </div>
@@ -418,9 +440,11 @@ function App() {
                 <h2>
                   {!hasOpeningBalance
                     ? "Start with the facts."
-                    : data.forecast.firstShortfall
-                      ? `A gap ahead on ${date(data.forecast.firstShortfall)}.`
-                      : "Room to breathe."}
+                    : data.forecast.shortfallExplanation?.openingAlreadyNegative
+                      ? "Opening balance below zero."
+                      : data.forecast.firstShortfall
+                        ? `A gap ahead on ${date(data.forecast.firstShortfall)}.`
+                        : "Room to breathe."}
                 </h2>
                 <p>
                   {!hasOpeningBalance
@@ -436,6 +460,20 @@ function App() {
                 <small>Rule-based insight / no AI-generated advice</small>
               </aside>
             </section>
+            <ForecastExplanation
+              forecast={data.forecast}
+              documents={data.documents}
+              hasOpeningBalance={hasOpeningBalance}
+              pendingEvents={data.status.pendingEvents}
+              busy={busy}
+              onEdit={editDocument}
+            />
+            <RecurringExpensesPanel
+              rules={data.recurringExpenses}
+              documents={data.documents}
+              busy={busy}
+              onAction={action}
+            />
             <section className="panel activity" id="activity">
               <div className="panel-heading">
                 <div>
@@ -614,6 +652,12 @@ function App() {
                                 ? "Customer invoice"
                                 : "Planned expense"}
                             </small>
+                            {doc.recurringExpenseId && (
+                              <small>
+                                Monthly occurrence /{" "}
+                                {doc.occurrenceMonth?.slice(0, 7)}
+                              </small>
+                            )}
                           </td>
                           <td className="mono">{doc.reference}</td>
                           <td>
@@ -647,18 +691,7 @@ function App() {
                                 <button
                                   disabled={busy}
                                   aria-label={`Edit ${doc.reference}`}
-                                  onClick={() => {
-                                    setEditing(doc);
-                                    setShowForm(true);
-                                    setCancelling(null);
-                                    window.setTimeout(
-                                      () =>
-                                        document
-                                          .getElementById("activity")
-                                          ?.scrollIntoView({ block: "start" }),
-                                      0,
-                                    );
-                                  }}
+                                  onClick={() => editDocument(doc)}
                                 >
                                   Edit
                                 </button>

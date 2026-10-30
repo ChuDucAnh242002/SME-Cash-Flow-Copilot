@@ -25,6 +25,8 @@ const document: Document = {
   expectedDate: null,
   cancelled: false,
   revision: 0,
+  recurringExpenseId: null,
+  occurrenceMonth: null,
 };
 
 describe("payment review eligibility", () => {

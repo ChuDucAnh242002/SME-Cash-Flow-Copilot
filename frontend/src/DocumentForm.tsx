@@ -28,7 +28,10 @@ export function DocumentForm({
         event.preventDefault();
         const fields = new FormData(event.currentTarget);
         onSave({
-          kind: matched ? document.kind : String(fields.get("kind")),
+          kind:
+            document && (matched || document.recurringExpenseId)
+              ? document.kind
+              : String(fields.get("kind")),
           counterparty: String(fields.get("counterparty")),
           reference: matched
             ? document.reference
@@ -44,7 +47,7 @@ export function DocumentForm({
         <select
           name="kind"
           defaultValue={document?.kind ?? "INVOICE"}
-          disabled={busy || matched}
+          disabled={busy || matched || !!document?.recurringExpenseId}
         >
           <option value="INVOICE">Customer invoice</option>
           <option value="EXPENSE">Planned expense</option>
