@@ -71,7 +71,8 @@ public class EventPipeline {
         FinanceEvent event = mapper.readValue(record.value(), FinanceEvent.class);
         if (event.id() == null || event.schemaVersion() != 1
                 || !Set.of("BANK_SYNCED", "DOCUMENT_CREATED", "DOCUMENT_UPDATED", "DOCUMENT_CANCELLED",
-                        "DEMO_LOADED", "STATEMENT_IMPORTED", "PAYMENT_REVIEWED").contains(event.type())) {
+                        "DEMO_LOADED", "STATEMENT_IMPORTED", "PAYMENT_REVIEWED",
+                        "RECURRING_EXPENSE_CHANGED", "RECURRING_EXPENSE_GENERATED").contains(event.type())) {
             throw new IllegalArgumentException("Unsupported finance event schema");
         }
         tx.executeWithoutResult(status -> {

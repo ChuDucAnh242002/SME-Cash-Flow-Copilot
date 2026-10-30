@@ -59,13 +59,14 @@ class StatementIntegrationTest {
             store.jdbc().update("DELETE FROM payment_review_audit");
             store.jdbc().update("DELETE FROM payment_review");
             store.jdbc().update("DELETE FROM document");
+            store.jdbc().update("DELETE FROM recurring_expense");
             store.jdbc().update("DELETE FROM bank_transaction");
             store.jdbc().update("DELETE FROM account");
             store.jdbc().update("DELETE FROM outbox");
             store.jdbc().update("DELETE FROM processed_event");
             store.jdbc().update("""
                     UPDATE workspace SET planning_balance=NULL,last_sync=NULL,sync_error=NULL,last_reconciled=NULL,
-                    statement_date=NULL,statement_revision=0
+                    statement_date=NULL,statement_revision=0,recurrence_error=NULL
                     """);
         });
     }

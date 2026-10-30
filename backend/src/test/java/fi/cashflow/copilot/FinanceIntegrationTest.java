@@ -38,6 +38,7 @@ class FinanceIntegrationTest {
     @Autowired TransactionTemplate tx;
     @Autowired MockMvc mvc;
     @Autowired PaymentReviewService reviews;
+    @Autowired RecurringExpenseService recurring;
 
     @TestConfiguration
     static class TestClock {
@@ -58,11 +59,12 @@ class FinanceIntegrationTest {
             store.jdbc().update("DELETE FROM payment_review_audit");
             store.jdbc().update("DELETE FROM payment_review");
             store.jdbc().update("DELETE FROM document");
+            store.jdbc().update("DELETE FROM recurring_expense");
             store.jdbc().update("DELETE FROM bank_transaction");
             store.jdbc().update("DELETE FROM account");
             store.jdbc().update("DELETE FROM outbox");
             store.jdbc().update("DELETE FROM processed_event");
-            store.jdbc().update("UPDATE workspace SET planning_balance=NULL,last_sync=NULL,sync_error=NULL,last_reconciled=NULL");
+            store.jdbc().update("UPDATE workspace SET planning_balance=NULL,last_sync=NULL,sync_error=NULL,last_reconciled=NULL,recurrence_error=NULL");
         });
     }
 
@@ -440,6 +442,138 @@ class FinanceIntegrationTest {
         assertThat(findDocument("TARGET").paidAmount()).isEqualByComparingTo("60");
         assertThat(reviews.history("DEMO-FI-EUR", "competing-a").size()
                 + reviews.history("DEMO-FI-EUR", "competing-b").size()).isEqualTo(1);
+    }
+
+    @Test
+    void monthlyExpensesAreIdempotentCatchUpAndRetainOriginalMonthAfterIndividualEdits() throws Exception {
+        UUID id = UUID.randomUUID();
+        var input = new RecurringExpenseInput(id, "Monthly rent", new BigDecimal("100"),
+                LocalDate.of(2026, 10, 31), null);
+        recurring.create(input);
+        recurring.create(input);
+        recurring.generate();
+        var original = store.documents();
+        assertThat(original).hasSize(3);
+        assertThat(original).extracting(Document::dueDate).containsExactly(
+                LocalDate.of(2026, 10, 31), LocalDate.of(2026, 11, 30), LocalDate.of(2026, 12, 31));
+        assertThat(original).allMatch(document -> id.equals(document.recurringExpenseId()));
+        assertThat(original).extracting(Document::reference).doesNotHaveDuplicates();
+        var october = original.getFirst();
+        service.update(october.id(), new DocumentUpdate(new DocumentInput(Kind.EXPENSE, "Adjusted rent",
+                october.reference(), new BigDecimal("110"), october.dueDate(), october.dueDate().plusDays(5)), 0L));
+        service.cancel(original.get(1).id(), new RevisionInput(0L));
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.jdbc().update("UPDATE recurring_expense SET next_month=? WHERE id=?", input.firstDueDate().withDayOfMonth(1), id);
+        });
+        recurring.generate();
+        assertThat(store.documents()).hasSize(3);
+        assertThat(store.documents().getFirst().expectedDate()).isEqualTo(LocalDate.of(2026, 11, 5));
+        assertThat(store.documents().get(1).cancelled()).isTrue();
+        assertThatThrownBy(() -> service.update(october.id(), new DocumentUpdate(new DocumentInput(Kind.INVOICE,
+                "Rent", october.reference(), october.amount(), october.dueDate()), 1L)))
+                .hasMessageContaining("remain an expense");
+        var future = new RecurringExpenseService(store, tx,
+                Clock.fixed(Instant.parse("2027-02-01T10:00:00Z"), ZoneId.of("Europe/Helsinki")));
+        future.generate();
+        assertThat(store.documents()).hasSize(7);
+        assertThat(store.documents()).extracting(Document::occurrenceMonth).doesNotHaveDuplicates();
+        assertThat(store.documents()).extracting(Document::dueDate).contains(
+                LocalDate.of(2027, 1, 31), LocalDate.of(2027, 2, 28),
+                LocalDate.of(2027, 3, 31), LocalDate.of(2027, 4, 30));
+        assertThat(store.documents().get(1).cancelled()).isTrue();
+        future.generate();
+        assertThat(store.documents()).hasSize(7);
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+                assertThat(service.dashboard(90, 0).status().pendingEvents()).isZero());
+    }
+
+    @Test
+    void inclusiveEndAndStopPreserveOccurrencesAndPaidGuards() throws Exception {
+        service.sync();
+        UUID id = UUID.randomUUID();
+        recurring.create(new RecurringExpenseInput(id, "Rent", new BigDecimal("100"),
+                LocalDate.of(2026, 10, 29), LocalDate.of(2026, 11, 29)));
+        assertThat(store.documents()).hasSize(2);
+        var first = store.documents().getFirst();
+        tx.executeWithoutResult(status -> {
+            store.lock();
+            store.jdbc().update("INSERT INTO bank_transaction VALUES ('DEMO-FI-EUR','recurring-paid','2026-10-29',-40,?,'Rent')",
+                    first.reference());
+            store.reconcile();
+        });
+        assertThat(store.documents().getFirst().paidAmount()).isEqualByComparingTo("40");
+        assertThatThrownBy(() -> service.cancel(first.id(), new RevisionInput(0L))).hasMessageContaining("matched payments");
+        assertThatThrownBy(() -> service.update(first.id(), new DocumentUpdate(new DocumentInput(Kind.EXPENSE,
+                "Rent", first.reference(), new BigDecimal("39"), first.dueDate()), 0L))).hasMessageContaining("lower than");
+        var before = store.documents();
+        recurring.stop(id, new RevisionInput(0L));
+        assertThat(store.recurringExpenses().getFirst().stopped()).isTrue();
+        assertThat(store.recurringExpenses().getFirst().revision()).isEqualTo(1);
+        assertThatThrownBy(() -> recurring.stop(id, new RevisionInput(0L))).hasMessageContaining("already stopped");
+        new RecurringExpenseService(store, tx, Clock.fixed(Instant.parse("2027-03-01T10:00:00Z"), ZoneId.of("Europe/Helsinki"))).generate();
+        assertThat(store.documents()).containsExactlyElementsOf(before);
+        UUID ended = UUID.randomUUID();
+        recurring.create(new RecurringExpenseInput(ended, "One month", new BigDecimal("10"),
+                LocalDate.of(2026, 10, 29), LocalDate.of(2026, 10, 29)));
+        assertThat(store.documents().stream().filter(doc -> ended.equals(doc.recurringExpenseId()))).hasSize(1);
+    }
+
+    @Test
+    void recurringApiValidatesDatesAndRequestsAndSerializesConcurrentGeneration() throws Exception {
+        UUID id = UUID.randomUUID();
+        String body = """
+                {"requestId":"%s","counterparty":"Salary","amount":100,"firstDueDate":"2026-10-31"}
+                """.formatted(id);
+        mvc.perform(post("/api/recurring-expenses").with(httpBasic("developer", "integration-test-password"))
+                .contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/recurring-expenses").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content(body.replace(":100", ":-1"))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/recurring-expenses").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content(body.replace("2026-10-31", "2026-10-28"))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/recurring-expenses").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content(body)).andExpect(status().isNoContent());
+        mvc.perform(post("/api/recurring-expenses").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content(body)).andExpect(status().isNoContent());
+        mvc.perform(post("/api/recurring-expenses").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content(body.replace(":100", ":101"))).andExpect(status().isConflict());
+        assertThatThrownBy(() -> recurring.create(new RecurringExpenseInput(UUID.randomUUID(), "Invalid",
+                BigDecimal.ONE, LocalDate.of(2026, 11, 1), LocalDate.of(2026, 10, 31)))).hasMessageContaining("End date");
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(recurring::generate);
+            var second = executor.submit(recurring::generate);
+            first.get(); second.get();
+        }
+        assertThat(store.recurringExpenses()).hasSize(1);
+        assertThat(store.documents()).hasSize(3);
+        mvc.perform(post("/api/recurring-expenses/" + id + "/stop").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content("{\"revision\":9}")).andExpect(status().isConflict());
+        mvc.perform(post("/api/recurring-expenses/" + UUID.randomUUID() + "/stop").with(httpBasic("developer", "integration-test-password")).with(csrf())
+                .contentType("application/json").content("{\"revision\":0}")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void generationFailureRollsBackAllOccurrencesAndSurfacesAnExplicitError() {
+        UUID id = UUID.randomUUID();
+        recurring.create(new RecurringExpenseInput(id, "Future rent", new BigDecimal("100"),
+                LocalDate.of(2027, 2, 1), null));
+        assertThat(store.documents()).isEmpty();
+        String conflicting = "REC-" + id + "-2027-03";
+        service.create(new DocumentInput(Kind.EXPENSE, "Existing plan", conflicting, BigDecimal.TEN,
+                LocalDate.of(2027, 3, 1)));
+        var future = new RecurringExpenseService(store, tx,
+                Clock.fixed(Instant.parse("2027-02-01T10:00:00Z"), ZoneId.of("Europe/Helsinki")));
+        future.scheduledGeneration();
+        assertThat(store.documents()).hasSize(1);
+        assertThat(store.recurringExpenses().getFirst().nextMonth()).isEqualTo(LocalDate.of(2027, 2, 1));
+        assertThat(store.status().recurrenceError()).contains("generation failed");
+        var document = store.documents().getFirst();
+        service.update(document.id(), new DocumentUpdate(new DocumentInput(Kind.EXPENSE, "Existing plan",
+                "UNBLOCKED", BigDecimal.TEN, document.dueDate()), document.revision()));
+        future.generate();
+        assertThat(store.documents()).hasSize(5);
+        assertThat(store.status().recurrenceError()).isNull();
+        assertThat(store.recurringExpenses().getFirst().nextDueDate()).isEqualTo(LocalDate.of(2027, 6, 1));
     }
 
     BankTransaction payment(String externalId) {

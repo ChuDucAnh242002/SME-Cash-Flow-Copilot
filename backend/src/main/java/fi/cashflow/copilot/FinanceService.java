@@ -43,7 +43,7 @@ public class FinanceService implements ApplicationRunner {
             var documents = store.documents();
             return new Dashboard(store.status(), account, planning, documents, store.transactions(),
                     engine.forecast(planning != null ? planning : account == null ? BigDecimal.ZERO : account.bookedBalance(),
-                            documents, LocalDate.now(clock), days, delay));
+                            documents, LocalDate.now(clock), days, delay), store.recurringExpenses());
         });
     }
 
@@ -58,6 +58,9 @@ public class FinanceService implements ApplicationRunner {
             store.reconcile();
             Document current = editableDocument(id, update.revision());
             DocumentInput input = update.document();
+            if (current.recurringExpenseId() != null && input.kind() != Kind.EXPENSE) {
+                throw new IllegalStateException("A recurring occurrence must remain an expense.");
+            }
             if (current.paidAmount().signum() > 0) {
                 if (input.kind() != current.kind()
                         || !normalizeReference(input.reference()).equals(normalizeReference(current.reference()))) {

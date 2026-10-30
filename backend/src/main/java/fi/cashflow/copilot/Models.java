@@ -43,6 +43,20 @@ public final class Models {
     public record DocumentUpdate(@NotNull @jakarta.validation.Valid DocumentInput document,
                                  @NotNull @PositiveOrZero Long revision) {}
     public record RevisionInput(@NotNull @PositiveOrZero Long revision) {}
+    public record RecurringExpenseInput(
+            @NotNull UUID requestId,
+            @NotBlank @Size(max = 160) String counterparty,
+            @NotNull @DecimalMin("0.01") @DecimalMax("999999999.99")
+            @Digits(integer = 9, fraction = 2) BigDecimal amount,
+            @NotNull LocalDate firstDueDate, LocalDate endDate) {}
+    public record RecurringExpense(UUID id, String counterparty, BigDecimal amount,
+                                   LocalDate firstDueDate, LocalDate endDate, LocalDate nextMonth,
+                                   boolean stopped, long revision) {
+        @com.fasterxml.jackson.annotation.JsonProperty
+        public LocalDate nextDueDate() {
+            return monthlyOccurrence(firstDueDate, YearMonth.from(nextMonth));
+        }
+    }
     public record PlanningInput(
             @DecimalMin("-999999999.99") @DecimalMax("999999999.99")
             @Digits(integer = 9, fraction = 2) BigDecimal openingBalance) {}
@@ -66,10 +80,17 @@ public final class Models {
 
     public record Document(UUID id, Kind kind, String counterparty, String reference,
                            BigDecimal amount, LocalDate dueDate, BigDecimal paidAmount,
-                           LocalDate expectedDate, boolean cancelled, long revision) {
+                           LocalDate expectedDate, boolean cancelled, long revision,
+                           UUID recurringExpenseId, LocalDate occurrenceMonth) {
+        public Document(UUID id, Kind kind, String counterparty, String reference,
+                        BigDecimal amount, LocalDate dueDate, BigDecimal paidAmount,
+                        LocalDate expectedDate, boolean cancelled, long revision) {
+            this(id, kind, counterparty, reference, amount, dueDate, paidAmount, expectedDate,
+                    cancelled, revision, null, null);
+        }
         public Document(UUID id, Kind kind, String counterparty, String reference,
                         BigDecimal amount, LocalDate dueDate, BigDecimal paidAmount) {
-            this(id, kind, counterparty, reference, amount, dueDate, paidAmount, null, false, 0);
+            this(id, kind, counterparty, reference, amount, dueDate, paidAmount, null, false, 0, null, null);
         }
         public BigDecimal remaining() { return amount.subtract(paidAmount); }
     }
@@ -88,16 +109,26 @@ public final class Models {
     public record BankSnapshot(Account account, List<BankTransaction> transactions) {}
     public record ForecastItem(UUID documentId, String label, BigDecimal amount) {}
     public record ForecastDay(LocalDate date, BigDecimal balance, List<ForecastItem> items) {}
+    public record ForecastContribution(LocalDate date, UUID documentId, String label, BigDecimal amount) {}
+    public record ShortfallExplanation(LocalDate date, boolean openingAlreadyNegative,
+                                       BigDecimal balanceBeforeDay, BigDecimal receipts, BigDecimal outgoings,
+                                       BigDecimal closingBalance, List<ForecastContribution> contributions) {}
     public record Forecast(int days, int incomeDelayDays, BigDecimal openingBalance, BigDecimal minimumBalance,
-                           LocalDate firstShortfall, List<ForecastDay> series, List<String> assumptions) {}
+                           LocalDate firstShortfall, List<ForecastDay> series, List<String> assumptions,
+                           BigDecimal expectedReceipts, BigDecimal plannedOutgoings, BigDecimal closingBalance,
+                           ShortfallExplanation shortfallExplanation) {}
     public record Status(String mode, Instant lastSync, String syncError, Instant lastReconciled,
-                         long pendingEvents, String eventError, LocalDate statementDate) {}
+                         long pendingEvents, String eventError, LocalDate statementDate, String recurrenceError) {}
     public record Dashboard(Status status, Account account, BigDecimal planningBalance, List<Document> documents,
-                            List<BankTransaction> transactions, Forecast forecast) {}
+                            List<BankTransaction> transactions, Forecast forecast, List<RecurringExpense> recurringExpenses) {}
     public record FinanceEvent(UUID id, String type, int schemaVersion) {}
     public record SyncResult(int imported, int observed) {}
 
     public static String normalizeReference(String reference) {
         return reference.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+    }
+
+    public static LocalDate monthlyOccurrence(LocalDate first, YearMonth month) {
+        return month.atDay(Math.min(first.getDayOfMonth(), month.lengthOfMonth()));
     }
 }

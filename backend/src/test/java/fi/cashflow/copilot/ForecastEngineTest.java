@@ -77,4 +77,38 @@ class ForecastEngineTest {
         assertThat(forecast.series().stream().flatMap(day -> day.items().stream()).count()).isEqualTo(1);
         assertThat(invoice.dueDate()).isEqualTo(today.minusDays(2));
     }
+
+    @Test
+    void explainsFirstNegativeClosingWithPriorMovementsAndExactHorizonTotals() {
+        var rent = document(Kind.EXPENSE, "50", "0", 1);
+        var receipt = document(Kind.INVOICE, "30", "10", 2);
+        var salaries = document(Kind.EXPENSE, "100", "0", 3);
+        var later = document(Kind.INVOICE, "200", "0", 29);
+        var outside = document(Kind.EXPENSE, "999", "0", 30);
+        var forecast = engine.forecast(new BigDecimal("100"), List.of(rent, receipt, salaries, later, outside), today, 30, 0);
+        assertThat(forecast.expectedReceipts()).isEqualByComparingTo("220");
+        assertThat(forecast.plannedOutgoings()).isEqualByComparingTo("150");
+        assertThat(forecast.closingBalance()).isEqualByComparingTo("170");
+        assertThat(forecast.openingBalance().add(forecast.expectedReceipts()).subtract(forecast.plannedOutgoings()))
+                .isEqualByComparingTo(forecast.closingBalance());
+        var explanation = forecast.shortfallExplanation();
+        assertThat(explanation.date()).isEqualTo(today.plusDays(3));
+        assertThat(explanation.openingAlreadyNegative()).isFalse();
+        assertThat(explanation.balanceBeforeDay()).isEqualByComparingTo("70");
+        assertThat(explanation.receipts()).isEqualByComparingTo("0");
+        assertThat(explanation.outgoings()).isEqualByComparingTo("100");
+        assertThat(explanation.closingBalance()).isEqualByComparingTo("-30");
+        assertThat(explanation.contributions()).extracting(ForecastContribution::documentId)
+                .containsExactly(rent.id(), receipt.id(), salaries.id());
+    }
+
+    @Test
+    void negativeOpeningIsExplainedEvenWhenTodaysReceiptsRecoverTheClosingBalance() {
+        var forecast = engine.forecast(new BigDecimal("-10"), List.of(document(Kind.INVOICE, "20", "0", 0)), today, 7, 0);
+        assertThat(forecast.shortfallExplanation().openingAlreadyNegative()).isTrue();
+        assertThat(forecast.shortfallExplanation().balanceBeforeDay()).isEqualByComparingTo("-10");
+        assertThat(forecast.shortfallExplanation().closingBalance()).isEqualByComparingTo("10");
+        assertThat(forecast.shortfallExplanation().receipts()).isEqualByComparingTo("20");
+        assertThat(engine.forecast(BigDecimal.ZERO, List.of(), today, 7, 0).shortfallExplanation()).isNull();
+    }
 }

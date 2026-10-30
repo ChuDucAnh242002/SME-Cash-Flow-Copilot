@@ -29,6 +29,11 @@ public class ApiErrors {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
     }
 
+    @ExceptionHandler(RecurringExpenseService.RecurringExpenseNotFoundException.class)
+    ProblemDetail recurringMissing(RecurringExpenseService.RecurringExpenseNotFoundException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+    }
+
     @ExceptionHandler({IllegalStateException.class, FinanceService.SyncBusyException.class})
     ProblemDetail conflict(RuntimeException exception) {
         log.warn("Request conflict: {}", exception.getMessage());

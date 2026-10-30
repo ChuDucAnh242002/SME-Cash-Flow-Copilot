@@ -24,7 +24,16 @@ public class FinanceStore {
                 """, (rs, row) -> new Document(rs.getObject("id", UUID.class), Kind.valueOf(rs.getString("kind")),
                 rs.getString("counterparty"), rs.getString("reference"), rs.getBigDecimal("amount"),
                 rs.getObject("due_date", LocalDate.class), rs.getBigDecimal("paid_amount"),
-                rs.getObject("expected_date", LocalDate.class), rs.getBoolean("cancelled"), rs.getLong("revision")));
+                rs.getObject("expected_date", LocalDate.class), rs.getBoolean("cancelled"), rs.getLong("revision"),
+                rs.getObject("recurring_expense_id", UUID.class), rs.getObject("occurrence_month", LocalDate.class)));
+    }
+
+    public List<RecurringExpense> recurringExpenses() {
+        return jdbc.query("SELECT * FROM recurring_expense ORDER BY created_at,id", (rs, row) ->
+                new RecurringExpense(rs.getObject("id", UUID.class), rs.getString("counterparty"),
+                        rs.getBigDecimal("amount"), rs.getObject("first_due_date", LocalDate.class),
+                        rs.getObject("end_date", LocalDate.class), rs.getObject("next_month", LocalDate.class),
+                        rs.getBoolean("stopped"), rs.getLong("revision")));
     }
 
     public BigDecimal planningBalance() {
@@ -98,7 +107,7 @@ public class FinanceStore {
                   ORDER BY created_at LIMIT 1) AS event_error FROM workspace w WHERE id=1
                 """, (rs, row) -> new Status(rs.getString("bank_mode"), instant(rs, "last_sync"),
                 rs.getString("sync_error"), instant(rs, "last_reconciled"), rs.getLong("pending"), rs.getString("event_error"),
-                rs.getObject("statement_date", LocalDate.class)));
+                rs.getObject("statement_date", LocalDate.class), rs.getString("recurrence_error")));
     }
 
     public void lock() { jdbc.queryForObject("SELECT id FROM workspace WHERE id=1 FOR UPDATE", Integer.class); }
