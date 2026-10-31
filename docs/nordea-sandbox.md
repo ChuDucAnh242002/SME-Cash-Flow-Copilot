@@ -88,7 +88,8 @@ APP_PASSWORD=choose-a-unique-password-at-least-12-characters
 POSTGRES_PASSWORD=choose-a-different-database-password
 ```
 
-Start a **separate database** from the demo as described in the README. Keep the
+Start a **separate database** from the demo as described in the
+[workspace setup reference](reference.md#nordea-sandbox-setup). Keep the
 workspace/account binding stable. `NORDEA_FROM_DATE` is the earliest transaction
 date requested on every manual sync; adjust it to the sandbox's historical data.
 It must not be in the future. Requesting older history does not reconstruct an
@@ -128,7 +129,8 @@ transactions are not guaranteed to be an atomic snapshot at Nordea.
 
 ## Kubernetes credentials
 
-Create the namespace and `cashflow-config` as in the README. Then:
+Create the namespace and `cashflow-config` as in the
+[Kubernetes reference](reference.md#kubernetes). Then:
 
 ```sh
 kubectl -n sme-cashflow create secret generic nordea-credentials \

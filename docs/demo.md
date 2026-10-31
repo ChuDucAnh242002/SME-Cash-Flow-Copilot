@@ -42,7 +42,7 @@ reconciliation. It preserves plans and decisions, and restores Kafka even after 
 ordinary check failure. A killed process cannot run cleanup: run
 `docker unpause sme-cashflow-recruiter-demo-kafka-1` if paused, then use `up` to restore the
 stack. Cold startup with an unresolvable broker DNS name requires restoring Kafka first.
-See [processing diagnostics and recovery](../README.md#reliability-and-processing-diagnostics).
+See [processing diagnostics and recovery](reference.md#reliability-and-processing-diagnostics).
 
 Isolation is fixed in the CLI:
 
@@ -124,7 +124,7 @@ month lengths. Edit individual occurrences through the normal document workflow.
 Stop the rule and confirm. Existing future expenses remain; stopping prevents new
 generation, it does not erase obligations or matches.
 
-Finish with the [architecture](../README.md#architecture):
+Finish with the [architecture](architecture.md) and [decision records](decisions.md):
 Spring Boot modular monolith, ports/adapters, PostgreSQL, transactional outbox,
 at-least-once Kafka and idempotent reconciliation. Kubernetes manifests provide a
 single-broker development deployment on Kubernetes, not a claim of production readiness.
