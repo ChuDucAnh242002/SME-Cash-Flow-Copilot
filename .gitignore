@@ -10,4 +10,6 @@ frontend/*.tsbuildinfo
 frontend/test-results/
 frontend/playwright-report/
 *.log
+*.dump
+*.dump.sha256
 .DS_Store

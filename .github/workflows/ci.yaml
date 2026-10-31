@@ -26,8 +26,9 @@ jobs:
         working-directory: backend
       - run: docker compose config --quiet
       - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml config --quiet
-      - run: node --test scripts/demo.test.mjs
+      - run: bash -n scripts/k8s-db.sh && node --test scripts/demo.test.mjs scripts/k8s-db.test.mjs
       - run: kubectl kustomize deploy/k8s > /tmp/cashflow-rendered.yaml
+      - run: kubectl kustomize deploy/k8s-demo > /tmp/cashflow-demo-rendered.yaml
       - run: docker compose up --build -d --wait
       - run: node scripts/smoke.mjs
       - run: npx playwright install --with-deps chromium && npm run test:e2e

@@ -127,7 +127,7 @@ generation, it does not erase obligations or matches.
 Finish with the [architecture](../README.md#architecture):
 Spring Boot modular monolith, ports/adapters, PostgreSQL, transactional outbox,
 at-least-once Kafka and idempotent reconciliation. Kubernetes manifests provide a
-single-node development deployment, not a claim of production readiness.
+single-broker development deployment on Kubernetes, not a claim of production readiness.
 Forecasts are deterministic Java calculations; no generative AI or real payments.
 
 ## After presenting

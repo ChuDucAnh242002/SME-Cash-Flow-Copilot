@@ -506,34 +506,128 @@ queue/failure state comes from the authenticated dashboard, not these counters.
 This uses the existing Actuator/Micrometer stack; no public metrics endpoint, Prometheus
 server, tracing backend, alert routing or log aggregation is installed.
 
-## Kubernetes / k3s
+## Kubernetes
 
-The [Kustomize manifests](deploy/k8s) are a **single-node development deployment**:
+The [Kustomize manifests](deploy/k8s) are a **development deployment**:
 one application, one PostgreSQL and one KRaft Kafka broker, with persistent volumes.
-They do not change your current cluster until you explicitly apply them.
+They work on Kubernetes with a default dynamic storage class and may schedule across
+worker nodes. They do not change your current cluster until you explicitly apply them.
 
 ```sh
-docker compose build app
-# For a local k3s node; use your registry instead for a remote/multi-node cluster.
-docker save sme-cashflow-copilot:0.1.0 -o /tmp/cashflow-image.tar
-sudo k3s ctr images import /tmp/cashflow-image.tar
-kubectl apply -f deploy/k8s/namespace.yaml
+export KUBE_CONTEXT="$(kubectl config current-context)"
+docker build -t sme-cashflow-copilot:0.1.0 .
+# For containerd workers without a registry: import on EVERY schedulable worker.
+# Run once per worker using your own SSH connection and key configuration.
+docker save sme-cashflow-copilot:0.1.0 | ssh ubuntu@<worker-address> 'sudo ctr -n k8s.io images import -'
+# Alternatively push a versioned image to your private registry and update the
+# copilot image in your Kustomize overlay (configure imagePullSecrets if needed).
+kubectl --context "$KUBE_CONTEXT" apply -f deploy/k8s/namespace.yaml
 # .env must contain actual APP_PASSWORD and POSTGRES_PASSWORD values.
-kubectl -n sme-cashflow create secret generic cashflow-config --from-env-file=.env
-kubectl apply -k deploy/k8s
-kubectl -n sme-cashflow rollout status deployment/copilot --timeout=300s
-kubectl -n sme-cashflow port-forward service/copilot 8080:8080
+kubectl --context "$KUBE_CONTEXT" -n sme-cashflow create secret generic cashflow-config --from-env-file=.env
+kubectl --context "$KUBE_CONTEXT" apply -k deploy/k8s
+kubectl --context "$KUBE_CONTEXT" -n sme-cashflow rollout status statefulset/postgres --timeout=300s
+kubectl --context "$KUBE_CONTEXT" -n sme-cashflow rollout status statefulset/kafka --timeout=300s
+kubectl --context "$KUBE_CONTEXT" -n sme-cashflow rollout status deployment/copilot --timeout=300s
+kubectl --context "$KUBE_CONTEXT" -n sme-cashflow port-forward service/copilot 8080:8080
 ```
 
-The examples assume the default `cluster.local` DNS domain and a default storage class
-(k3s normally provides local-path storage). For Nordea mode, create `nordea-credentials`
+Kafka uses namespace-relative StatefulSet DNS instead of a hard-coded cluster domain.
+Its headless service publishes addresses before readiness so the KRaft controller can
+resolve itself during bootstrap; application readiness still depends on app + database,
+not the broker.
+The PVCs use the cluster's default storage class; set `storageClassName` in both
+StatefulSet claim templates before first deployment if your cluster has no default.
+With node-local storage, PostgreSQL and Kafka remain bound to their respective nodes:
+pod restarts are supported, but losing a node/disk is not transparent failover.
+For Nordea mode, create `nordea-credentials`
 with keys `client-secret` and `access-token` from your local files. The developer
 sandbox uses Nordea's sandbox signature marker; no private key is required.
-See the integration guide. `cashflow-config` is deliberately not committed.
+See the integration guide. Real `cashflow-config` credentials are deliberately not
+committed; only the synthetic demo overlay contains fixed local defaults.
 
 One application replica is intentional: login/CSRF sessions are in memory. Add shared
 sessions or an identity gateway before scaling replicas. No public Ingress is installed.
 Application probes expose only health status without financial data.
+
+For a **synthetic-only recruiter demo**, [the demo overlay](deploy/k8s-demo) supplies
+fixed local credentials and `BANK_MODE=demo`; never use it with business data or public
+access. Build `sme-cashflow-recruiter-demo:0.1.0`, import it on every schedulable worker
+as above, then apply `kubectl --context "$KUBE_CONTEXT" apply -k deploy/k8s-demo`.
+Do not apply this overlay over an existing Nordea/statement workspace. The namespace is
+`sme-cashflow`; Compose projects and their volumes remain independent. Forward its
+service to a free local port, then run `APP_URL=http://127.0.0.1:<port> node scripts/smoke.mjs`
+to initialize and verify synthetic data.
+
+### Development backup and restore
+
+PVCs preserve data across pod restarts; they are **not backups**.
+The PostgreSQL database is authoritative. Kafka carries replayable event IDs, so a
+database restore requeues outbox events that were not yet reconciled. This procedure
+does not back up the Kafka PVC, provide off-site retention, or make this single-broker
+deployment highly available.
+
+Set the exact Kubernetes context explicitly for every operation; the script never
+assumes or changes the current context. Backups contain sensitive financial records.
+Store them outside the repository on access-restricted storage, and encrypt them before
+copying off the machine:
+
+```sh
+kubectl config current-context
+export KUBE_CONTEXT="<your-kubernetes-context>"
+install -d -m 700 "$HOME/.local/share/sme-cashflow-backups"
+scripts/k8s-db.sh backup "$HOME/.local/share/sme-cashflow-backups/cashflow-$(date -u +%Y%m%dT%H%M%SZ).dump"
+scripts/k8s-db.sh verify "$HOME/.local/share/sme-cashflow-backups/cashflow-<timestamp>.dump"
+```
+
+The custom-format PostgreSQL archive and SHA-256 sidecar are mode `0600`; verification
+checks both the digest and every archive entry by rendering its SQL without executing it.
+This detects truncated archives but does not prove compatibility with every deployment
+or replace a test restore. Back up regularly and keep multiple tested generations.
+A restore replaces database contents and therefore
+requires an explicit confirmation:
+
+```sh
+scripts/k8s-db.sh restore "$HOME/.local/share/sme-cashflow-backups/cashflow-<timestamp>.dump" --confirm-restore
+```
+
+Before replacing data, restore verifies the archive and writes a separate pre-restore
+backup after stopping the app so accepted writes are included. It restores PostgreSQL,
+queues outbox records missing a processed marker, and starts the app so Kafka can
+reconcile them. If restore or app readiness
+fails, it attempts to restore the pre-restore database automatically; inspect the
+command output and retained backup before retrying. Do not delete the pre-restore copy
+until the restored workspace has been checked. Always inspect `KUBE_CONTEXT` and the
+namespace (`sme-cashflow`) before backup or restore. This is a local development
+runbook, not a production disaster-recovery or compliance plan.
+Use the matching application/schema version when restoring; check the dashboard's
+pending stages drain and compare documents, review decisions, recurring rules and
+forecast. Kafka offsets are not rolled back; republishing unprocessed outbox IDs is
+intentional and idempotent. Unsupported retained Kafka records still require operator
+investigation.
+Run only one restore at a time and prevent concurrent deployment changes. An interrupted
+process cannot guarantee cleanup: keep the printed pre-restore backup, inspect
+PostgreSQL and the deployment before starting the app, and do not delete database
+volumes to clear an error. Port-forward connections and in-memory login/CSRF sessions
+must be re-established after an application pod is recreated.
+
+Validate changes only in a disposable synthetic workspace:
+
+```sh
+bash -n scripts/k8s-db.sh
+node --test scripts/demo.test.mjs scripts/k8s-db.test.mjs
+kubectl --context "$KUBE_CONTEXT" apply --dry-run=server -k deploy/k8s-demo
+# With the demo port-forward running:
+APP_URL=http://127.0.0.1:8084 node scripts/smoke.mjs
+cd frontend
+APP_URL=http://127.0.0.1:8084 npm run test:e2e
+```
+
+Step 6 verification on Kubernetes covered the V1-V6 migrations, all 21 demo browser
+tests, exact document/review/rule/transaction/outbox fingerprints across PostgreSQL
+and Kafka pod recreation, exact financial output after restoring an older backup,
+and automatic reconciliation of a genuinely published-but-unprocessed event after
+Kafka offsets had advanced. Restore error/rollback handling is also covered by CLI
+tests; corrupt or truncated archives are rejected before database replacement.
 
 **Before production:** proper identity/tenant isolation, TLS, managed/replicated
 PostgreSQL and Kafka, backups/restores, network policies, Kafka TLS/authentication,

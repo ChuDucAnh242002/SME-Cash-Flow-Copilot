@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sme-cashflow
+resources:
+  - ../k8s
+images:
+  - name: sme-cashflow-copilot
+    newName: sme-cashflow-recruiter-demo
+    newTag: "0.1.0"
+secretGenerator:
+  - name: cashflow-config
+    literals:
+      - APP_USER=developer
+      - APP_PASSWORD=local-demo-password
+      - POSTGRES_PASSWORD=local-database-password
+      - BANK_MODE=demo
