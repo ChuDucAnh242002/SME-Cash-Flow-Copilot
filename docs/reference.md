@@ -21,7 +21,7 @@ a command explicitly changes directory. Independent prototype; no real money mov
 
 ## Run locally
 
-For a recruiter walkthrough or repeatable synthetic session, use the
+For a walkthrough or repeatable synthetic session, use the
 [isolated demo guide](demo.md). It starts a credential-free workspace on
 **http://localhost:8083**, ignores your `.env`, and offers an explicitly confirmed
 reset without touching statement/sandbox data:
@@ -434,7 +434,8 @@ the durable publication warning, restarts the app with Kafka down, restores the 
 in `finally`, and verifies automatic recovery without changing documents, decisions,
 rules or the forecast. It never resets data or targets the statement/sandbox projects.
 If the process/host is forcibly killed, `finally` cannot run: use
-`docker unpause sme-cashflow-recruiter-demo-kafka-1` if it is paused, then
+find the dedicated demo broker with `docker ps -a`, run
+`docker unpause <demo-broker-container>` if it is paused, then
 `node scripts/demo.mjs up` and inspect diagnostics.
 Run on an initialized, caught-up demo; avoid crossing Helsinki midnight during the check.
 
@@ -498,10 +499,18 @@ One application replica is intentional: login/CSRF sessions are in memory. Add s
 sessions or an identity gateway before scaling replicas. No public Ingress is installed.
 Application probes expose only health status without financial data.
 
-For a **synthetic-only recruiter demo**, [the demo overlay](../deploy/k8s-demo) supplies
+For a **synthetic-only demo**, [the demo overlay](../deploy/k8s-demo) supplies
 fixed local credentials and `BANK_MODE=demo`; never use it with business data or public
-access. Build `sme-cashflow-recruiter-demo:0.1.0`, import it on every schedulable worker
-as above, then apply `kubectl --context "$KUBE_CONTEXT" apply -k deploy/k8s-demo`.
+access. Build the app using the image name declared in the overlay:
+
+```sh
+DEMO_IMAGE="$(kubectl kustomize deploy/k8s-demo | awk '/image:/{print $2; exit}')"
+docker build -t "$DEMO_IMAGE" .
+# Repeat for each schedulable worker:
+docker save "$DEMO_IMAGE" | ssh ubuntu@<worker-address> 'sudo ctr -n k8s.io images import -'
+kubectl --context "$KUBE_CONTEXT" apply -k deploy/k8s-demo
+```
+
 Do not apply this overlay over an existing Nordea/statement workspace. The namespace is
 `sme-cashflow`; Compose projects and their volumes remain independent. Forward its
 service to a free local port, then run `APP_URL=http://127.0.0.1:<port> node scripts/smoke.mjs`
@@ -571,7 +580,7 @@ cd frontend
 APP_URL=http://127.0.0.1:8084 npm run test:e2e
 ```
 
-Step 6 verification on Kubernetes covered the V1-V6 migrations, all 21 demo browser
+Verification on Kubernetes covered the V1-V6 migrations, all 21 demo browser
 tests, exact document/review/rule/transaction/outbox fingerprints across PostgreSQL
 and Kafka pod recreation, exact financial output after restoring an older backup,
 and automatic reconciliation of a genuinely published-but-unprocessed event after

@@ -125,7 +125,7 @@ Planning-balance updates do not require a reconciliation event.
 
 ## Deployment, health, and recovery
 
-Compose isolates a disposable recruiter demo from user-managed workspaces. Kubernetes
+Compose isolates a disposable synthetic demo from user-managed workspaces. Kubernetes
 runs one app deployment and single-instance PostgreSQL/Kafka StatefulSets, with two
 PVCs and ClusterIP/headless services. Import images into each schedulable containerd
 worker or use a private registry. No public Ingress or production Kafka authentication

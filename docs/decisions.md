@@ -65,7 +65,7 @@ splits, overpayments, refunds, or rule-wide editing/resume.
 
 ## ADR-004: Isolated demo and conservative Kubernetes recovery
 
-**Context.** Recruiters need a reproducible demonstration without bank credentials or
+**Context.** Users need a reproducible demonstration without bank credentials or
 accidental mutation of the user's statement workspace. Kubernetes also needs evidence
 of persistence/recovery, not just YAML that renders.
 

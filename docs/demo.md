@@ -1,4 +1,4 @@
-# Repeatable recruiter demo
+# Repeatable demo
 
 Independent prototype, not a Nordea product. Everything in this workspace is synthetic.
 No bank credentials, production access, payment initiation or real money.
@@ -40,14 +40,15 @@ The recovery check is optional and takes several minutes. It verifies a saved ou
 event survives app restart with Kafka paused (DNS still resolvable), then restores the broker and checks automatic
 reconciliation. It preserves plans and decisions, and restores Kafka even after an
 ordinary check failure. A killed process cannot run cleanup: run
-`docker unpause sme-cashflow-recruiter-demo-kafka-1` if paused, then use `up` to restore the
-stack. Cold startup with an unresolvable broker DNS name requires restoring Kafka first.
+find the dedicated demo broker with `docker ps -a` and run
+`docker unpause <demo-broker-container>` if paused, then use `up` to restore the stack.
+Cold startup with an unresolvable broker DNS name requires restoring Kafka first.
 See [processing diagnostics and recovery](reference.md#reliability-and-processing-diagnostics).
 
 Isolation is fixed in the CLI:
 
-- Compose project: `sme-cashflow-recruiter-demo`.
-- Image: `sme-cashflow-recruiter-demo:local`, separate from the statement/sandbox image.
+- Fixed Compose project and image: defined by [the CLI](../scripts/demo.mjs) and
+  [demo configuration](../compose.demo.yaml), separate from statement/sandbox resources.
 - Config: [compose.yaml](../compose.yaml) plus [compose.demo.yaml](../compose.demo.yaml).
 - Port: `127.0.0.1:8083`; no public binding.
 - Database/Kafka volumes belong only to this project. Reset deletes them, including
