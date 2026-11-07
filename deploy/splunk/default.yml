@@ -1,0 +1,4 @@
+splunk:
+  hec:
+    enable: true
+    ssl: false
