@@ -1,14 +1,57 @@
 # SME Cash-Flow Copilot
 
-A cash-flow planning workspace for Finnish SMEs: see when cash runs short, explain
-which obligations cause it, and explore payment assumptions without changing bank facts.
+**A positive bank balance today does not mean a small business can pay its bills next week.**
+This prototype combines read-only bank information with invoices and planned expenses
+to show **when cash may run short, why, and how payment timing changes the outcome**.
 
-**Independent prototype, not a Nordea product. No real money moves.**
-Java 21 / Spring Boot, React / TypeScript, PostgreSQL, Kafka, Docker Compose, Kubernetes.
+Java 21 / Spring Boot · React / TypeScript · PostgreSQL · Kafka · Kubernetes
 
-## Try the demo
+Independent project, not a Nordea product. No real money moves. "Copilot" means
+decision support here: forecasts are deterministic calculations, not generative AI.
 
-Requires Node 22.12+, Docker Engine with modern Compose, about 4 GB free memory,
+![Synthetic dashboard showing a EUR 12,500 booked balance, EUR -2,100 projected minimum, and the daily cash-flow chart](docs/images/dashboard.png)
+
+*Actual demo UI with synthetic data. Planned dates are relative to the day the demo is seeded.*
+
+## The problem, in numbers
+
+A synthetic business has **EUR 12,500** in its account. That looks comfortable until
+upcoming obligations are considered:
+
+| When | Cash movement | Balance |
+|---|---|---:|
+| Today | Opening booked balance | EUR 12,500 |
+| Day +5 | Salaries: EUR -9,800 | EUR 2,700 |
+| Day +9 | Equipment: EUR -4,800 | **EUR -2,100** |
+| Day +14 | Customer receipt: EUR +8,500 | EUR 6,400 |
+| Day +21 | Customer receipt: EUR +2,400 | EUR 8,800 |
+
+**The issue is a timing gap, not necessarily a loss-making business.** The dashboard
+explains the first shortage using its contributing documents. Moving the equipment's
+expected payment date to day +20 raises the projected minimum to **EUR 2,700**.
+If the customer pays seven days late, the shortage returns.
+
+Expected dates are assumptions: they do not change contractual due dates or initiate
+payments. Historical payments already included in the opening balance are matched
+against documents, **not added to the balance again**.
+
+## What you can do
+
+| Workflow | Outcome |
+|---|---|
+| Import bank information or preview/confirm a statement CSV | Start with observed balance and transactions; reject duplicate conflicts |
+| Add invoices, expenses, and monthly obligations | Build an explicit picture of upcoming cash movements |
+| Forecast 30/60/90 days and test customer delays | Understand the size, date, and causes of a projected shortage |
+| Save a planning balance or expected dates | Explore assumptions without overwriting bank facts |
+| Review a payment and record a reason | Correct matching, retain an audit history, and avoid counting settled plans |
+
+Monthly rules create ordinary editable expenses. Stopping a rule retains generated
+obligations. Manual payment decisions take priority over automatic reference matching;
+unlinking holds a payment unmatched until explicitly resumed or linked.
+
+## Try it locally
+
+Requires **Node 22.12+, Docker Engine with modern Compose, about 4 GB free memory**,
 and internet access for the first build. From the repository root:
 
 ```sh
@@ -16,12 +59,12 @@ node scripts/demo.mjs up --build
 ```
 
 Open **http://localhost:8083** with **developer / local-demo-password**.
-No bank credentials, portal subscription, or `.env` required. With remote VS Code,
-forward port 8083. Wait for `Demo ready`.
+Wait for `Demo ready`; with remote VS Code, forward port 8083.
+No bank credentials, portal subscription, or `.env` needed.
 
-The synthetic baseline has six documents, three bank transactions, **EUR 12,500**
-booked balance, and a **EUR -2,100** projected minimum. Rescheduling the equipment
-expense illustrates how a timing assumption can remove that shortage.
+The demo starts with six documents and three historical transactions, including two
+matched payments and an unmatched subscription. Planned dates are relative to the
+Helsinki day the scenario is seeded.
 
 ```sh
 node scripts/demo.mjs verify                 # Check the clean baseline
@@ -30,80 +73,117 @@ node scripts/demo.mjs up                     # Resume
 node scripts/demo.mjs reset --confirm-reset  # Delete ONLY dedicated demo data
 ```
 
-The demo has separate volumes from statement/sandbox workspaces. Do not put real
+The demo uses separate volumes from statement/sandbox workspaces. Never store real
 business data in it or expose its known credentials publicly. Verification syncs
-synthetic facts; after edits, reset before expecting baseline totals.
-See the [five-minute walkthrough](docs/demo.md) for the exact presentation sequence.
+synthetic facts; reset after edits before expecting baseline totals.
 
-## What it demonstrates
+## Nordea API integration
 
-- **Explainable planning:** 30/60/90-day daily forecasts, shortage contributors,
-  expected payment dates, and customer-delay scenarios.
-- **Facts versus assumptions:** a saved planning balance never overwrites the booked
-  balance; historical transactions are not added to it again.
-- **Human-in-the-loop reconciliation:** reference/direction matching, partial
-  settlement, manual linking, explicit unmatched holds, and recorded review reasons.
-- **Monthly obligations:** anchored monthly expenses generate ordinary editable
-  documents; stopping a rule retains already generated obligations.
-- **Multiple read-only sources:** credential-free demo, statement CSV preview/confirm,
-  or Nordea's Finnish Instant Reporting sandbox, in separate workspaces.
-- **Resilience:** durable outbox, idempotent consumer, visible retry/backlog state,
-  authenticated metrics, and verified Kubernetes database backup/restore.
+The project implements a read-only adapter for **Nordea's Finnish Instant Reporting
+sandbox** to fetch account information and transaction history. The same application
+can run with synthetic data or user-uploaded statements in separate workspaces.
+Failures are shown explicitly, never replaced with successful-looking demo data.
 
-## Architecture
+The API supplies **observed information**; future obligations come from entered
+documents. A bank integration port keeps Nordea payloads/authentication outside the
+forecast engine. Production API access requires Nordea agreements and onboarding;
+sandbox fixtures are not evidence of access to a real customer's account.
+See [sandbox configuration and verification limits](docs/nordea-sandbox.md).
 
-One Spring Boot application serves the React bundle and API. PostgreSQL is the
-authoritative store; financial mutations and outbox events commit together. Kafka
-triggers reconciliation, whose processed marker and allocations commit atomically.
-The dashboard computes its forecast from current database state.
+## Architecture and engineering decisions
 
-This is a **modular monolith with a bank port/adapters**, not microservices, event
-sourcing, or full CQRS. Kafka delivery is at least once, not an exactly-once banking
-guarantee. Safe edits and manual reviews reconcile synchronously as well.
+```mermaid
+flowchart LR
+    UI["React dashboard"] --> API["Spring Boot services"]
+    API --> Bank["Bank port: Nordea / demo"]
+    API --> Forecast["BigDecimal forecast"]
+    API --> DB[("PostgreSQL facts, plans, allocations, outbox")]
+    DB --> Publisher["Outbox publisher"]
+    Publisher --> Kafka["Kafka"]
+    Kafka --> Consumer["Idempotent reconciliation"]
+    Consumer --> DB
+```
 
-- [Architecture and event sequence](docs/architecture.md)
-- [Four architecture decision records](docs/decisions.md)
-- [Source entry points](docs/architecture.md#source-map)
-
-## Kubernetes
-
-[Base manifests](deploy/k8s) and a [synthetic demo overlay](deploy/k8s-demo) support
-Kubernetes with dynamic PVC storage. Import the app image into every schedulable
-containerd worker or use a private registry. One app replica and one PostgreSQL/Kafka
-instance are deliberate prototype limits, not high availability.
-
-See [deployment instructions](docs/reference.md#kubernetes) and
-[backup/restore procedures](docs/reference.md#development-backup-and-restore).
-No public Ingress is installed. Local-path storage survives pod restarts but does not
-provide transparent recovery from a lost node/disk.
-
-## Evidence and boundaries
-
-Steps 5-6 verified **39 backend tests**, **15 frontend unit tests**, and **21 demo
-browser tests** on the Kubernetes deployment. Backend integration tests use PostgreSQL
-Testcontainers and embedded Kafka. CLI coverage includes **nine backup/restore tests**.
-Recovery checks exercised broker outage plus app restart, exact database fingerprints
-across PostgreSQL/Kafka pod recreation, and replay after restoring behind Kafka offsets.
-
-[Test commands and scope](docs/reference.md#tests-and-development) distinguish checked
-behavior from production guarantees. There is no benchmark, HA certification, or
-general accessibility certification.
-
-Scope: **one owner, one workspace, one Finnish EUR account**. No payment initiation,
-generative AI, tax calculation, automatic recurrence inference, multi-tenancy,
-transaction splitting/refunds, or production banking authorization. Forecasts assume
-entered documents are complete and customers pay as modelled; they are not financial
-advice or intraday liquidity guarantees.
-
-## Documentation
-
-| Start here | Details |
+| Decision | Why it matters |
 |---|---|
-| [Recruiter walkthrough](docs/demo.md) | Synthetic baseline, scenarios, reset, failure recovery |
-| [Architecture](docs/architecture.md) | Boundaries, transaction sequence, invariants, source map |
-| [Decisions](docs/decisions.md) | Rationale, alternatives, consequences |
-| [Workflow/operations reference](docs/reference.md) | CSV contracts, payment review, recurring rules, tests, API |
-| [Nordea sandbox guide](docs/nordea-sandbox.md) | Portal onboarding, credentials, verification limits |
+| **One deployable, logical service boundaries** | Keeps financial transactions simple; avoids unnecessary microservice coordination |
+| **Facts + outbox in one transaction** | A broker outage does not lose an accepted financial change |
+| **Processed ID + reconciliation in one transaction** | Duplicate delivery and retries cannot process the same event twice |
+| **Decimal arithmetic and explicit assumptions** | Cash calculations and shortage explanations are inspectable and testable |
+| **Synchronous guards for edits and reviews** | Paid-document checks remain safe even while Kafka is behind |
+| **Visible queue stages and failures** | Eventual consistency is disclosed rather than presented as fully settled data |
+
+Kafka carries event ID, type, and schema version—not balances or customer details.
+Delivery is **at least once**. The database remains authoritative; this is a modular
+monolith with a bank port/adapters, **not full CQRS or event sourcing**.
+The dashboard computes from current facts and allocations. During reconciliation lag,
+settled documents can temporarily appear unpaid; processing diagnostics disclose it.
+
+Kubernetes runs one app replica plus PostgreSQL/Kafka StatefulSets with PVCs. The
+deployment was tested on a multi-node Kubernetes cluster. Headless-service DNS supports
+Kafka bootstrap; images can be imported into containerd workers or supplied by a private
+registry. No public Ingress is installed.
+
+Backups validate the checksum and read every archive entry. Confirmed restore stops the
+app, creates a safety backup, restores PostgreSQL, and requeues unprocessed events when
+Kafka offsets are ahead. Failed restore attempts trigger rollback. Node-local storage
+survives pod restarts, **not node/disk loss**; this is not an HA deployment.
+
+## Verification
+
+Recorded validation covers **39 backend tests**, **16 frontend unit tests**,
+**21 demo browser tests on Kubernetes**, and **9 backup/restore CLI tests**.
+Backend integration tests use real PostgreSQL through Testcontainers and embedded Kafka.
+
+- Duplicate bank sync and Kafka redelivery preserve financial results.
+- Database failures roll back reconciliation and its processed marker together.
+- Broker outage plus app restart retains pending events and recovers automatically.
+- PostgreSQL/Kafka pod recreation preserves exact financial-data fingerprints.
+- Restoring behind Kafka offsets republishes pending events and drains the backlog.
+- Browser tests cover planning, manual review, monthly expenses, errors, keyboard
+  focus, sampled text contrast, and 320px layouts.
+
+```sh
+# Frontend unit tests and type-check/build:
+cd frontend
+npm ci
+npm test
+npm run build
+cd ..
+# CLI guards and database recovery:
+bash -n scripts/k8s-db.sh
+node --test scripts/demo.test.mjs scripts/k8s-db.test.mjs
+# Browser tests against the clean synthetic demo (tests modify demo data):
+cd frontend
+npx playwright install chromium
+APP_URL=http://127.0.0.1:8083 npm run test:e2e
+```
+
+With Java 21 and Docker available, run `mvn -B verify` from `backend`.
+For container-based backend tests, Kubernetes deployment, and backup commands, see
+[the operations reference](docs/reference.md). Test counts describe recorded validation,
+not a scalability benchmark or general accessibility certification.
+
+## Scope and limits
+
+**One owner, one workspace, one Finnish EUR account.** No payment initiation,
+multi-tenancy, tax calculation, AI prediction, transaction splitting/refunds, or
+production banking authorisation. Forecasts depend on complete entered obligations
+and assumed customer payments; they are daily closing estimates, not intraday
+guarantees or financial advice.
+
+Before production: tenant-aware identity, TLS/Kafka access controls, managed/replicated
+storage, encrypted off-site backup retention, monitoring/alerting, and bank onboarding.
+
+### Further detail
+
+The essentials are above; these guides provide implementation and operating detail:
+
+- [Demo walkthrough](docs/demo.md)
+- [Architecture, transaction sequence, and source map](docs/architecture.md)
+- [Four architecture decision records](docs/decisions.md)
+- [Workflows, API contracts, Kubernetes, and recovery](docs/reference.md)
+- [Nordea sandbox onboarding](docs/nordea-sandbox.md)
 
 ### Reliability and processing diagnostics
 
