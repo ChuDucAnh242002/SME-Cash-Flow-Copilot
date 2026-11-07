@@ -151,8 +151,8 @@ npm test
 npm run build
 cd ..
 # CLI guards and database recovery:
-bash -n scripts/k8s-db.sh
-node --test scripts/demo.test.mjs scripts/k8s-db.test.mjs
+bash -n scripts/k8s-db.sh scripts/ci-compose.sh
+node --test scripts/*.test.mjs
 # Browser tests against the clean synthetic demo (tests modify demo data):
 cd frontend
 npx playwright install chromium
@@ -174,6 +174,17 @@ guarantees or financial advice.
 
 Before production: tenant-aware identity, TLS/Kafka access controls, managed/replicated
 storage, encrypted off-site backup retention, monitoring/alerting, and bank onboarding.
+
+## Optional Splunk and Jenkins
+
+A separate synthetic lab exports **only operational queue state and process counters**
+to local Splunk HEC. Its dashboard shows backlog, sampled failure/recovery transitions,
+and sample freshness without forwarding financial records or raw application logs.
+Splunk startup requires your explicit licence review and acceptance.
+
+The Jenkinsfile runs the existing tests and a disposable synthetic deployment, publishes
+JUnit reports, and cleans up its own CI volumes. GitHub Actions remains available.
+See [setup, dashboard, and validation boundaries](docs/enterprise-tools.md).
 
 ### Further detail
 

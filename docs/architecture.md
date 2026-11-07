@@ -136,6 +136,13 @@ Kafka bootstrap DNS must still resolve at app startup. Persistent queue/failure 
 survive restarts; authenticated Micrometer counters are per-process and reset.
 See [diagnostics](reference.md#reliability-and-processing-diagnostics).
 
+An optional, separate synthetic Compose lab uses a polling collector to project
+authenticated queue state and process counters into local Splunk HEC. It exports no
+financial fields or raw error/log payloads and never participates in writes.
+HEC acknowledgement is not a durable audit guarantee; samples may be missing.
+An optional Jenkins pipeline verifies an isolated CI deployment without replacing
+GitHub Actions. See [setup and validation boundaries](enterprise-tools.md).
+
 Database restore stops writes and creates a private safety backup before replacing
 PostgreSQL. It republishes outbox IDs missing processed markers, because existing
 Kafka offsets may be ahead of the restored database. Idempotency handles duplicates.
