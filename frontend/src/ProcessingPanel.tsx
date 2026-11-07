@@ -1,3 +1,4 @@
+import { timestamp } from "./format";
 import type { Dashboard } from "./types";
 
 export function ProcessingPanel({ status }: { status: Dashboard["status"] }) {
@@ -28,14 +29,14 @@ export function ProcessingPanel({ status }: { status: Dashboard["status"] }) {
         <p>
           Oldest pending event:{" "}
           {pipeline.oldestPendingAt
-            ? `${new Date(pipeline.oldestPendingAt).toLocaleString("en-GB", { timeZone: "Europe/Helsinki" })} Helsinki`
+            ? timestamp(pipeline.oldestPendingAt)
             : "None"}
           .
         </p>
         <p>
           Last successful reconciliation:{" "}
           {status.lastReconciled
-            ? `${new Date(status.lastReconciled).toLocaleString("en-GB", { timeZone: "Europe/Helsinki" })} Helsinki`
+            ? timestamp(status.lastReconciled)
             : "Not yet run"}
           .
         </p>

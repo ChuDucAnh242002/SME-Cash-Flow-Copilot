@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { request } from "./api";
-import { date, money } from "./format";
+import { date, money, timestamp } from "./format";
 import { eligibleDocuments, matchExplanation } from "./reconciliation";
 import type {
   Document,
@@ -309,10 +309,7 @@ export function PaymentReviewPanel({
             <li key={entry.id}>
               <strong>{actionLabels[entry.action]}</strong> / {entry.actor} /{" "}
               <time dateTime={entry.occurredAt}>
-                {new Date(entry.occurredAt).toLocaleString("en-GB", {
-                  timeZone: "Europe/Helsinki",
-                })}{" "}
-                Helsinki
+                {timestamp(entry.occurredAt)}
               </time>
               <p>
                 {entry.previousDocumentLabel ?? "Unmatched"} (

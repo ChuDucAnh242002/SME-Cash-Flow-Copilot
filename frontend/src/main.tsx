@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { request } from "./api";
-import { date, money } from "./format";
+import { date, money, timestamp } from "./format";
 import type { Dashboard, Document, Transaction } from "./types";
 import { DocumentForm } from "./DocumentForm";
 import { PlanningPanel } from "./PlanningPanel";
@@ -267,7 +267,7 @@ function App() {
               </span>
               <span>
                 {data.status.lastSync
-                  ? `Last ${statement ? "imported" : "synced"} ${new Date(data.status.lastSync).toLocaleString("en-GB", { timeZone: "Europe/Helsinki" })} Helsinki`
+                  ? `Last ${statement ? "imported" : "synced"} ${timestamp(data.status.lastSync)}`
                   : statement
                     ? "No statement imported"
                     : "Not synced yet"}

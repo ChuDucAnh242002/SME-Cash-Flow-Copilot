@@ -11,6 +11,9 @@ export const date = (value: string) =>
     month: "short",
   }).format(new Date(`${value}T12:00:00`));
 
+export const timestamp = (value: string) =>
+  `${new Date(value).toLocaleString("en-GB", { timeZone: "Europe/Helsinki" })} Helsinki`;
+
 export function localToday(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Helsinki",
