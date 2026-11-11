@@ -1,0 +1,56 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci && npm run build && npm test
+        working-directory: frontend
+      - run: mvn -B verify
+        working-directory: backend
+      - run: docker compose config --quiet
+      - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml config --quiet
+      - run: bash -n scripts/k8s-db.sh scripts/ci-compose.sh && node --test scripts/*.test.mjs
+      - run: kubectl kustomize deploy/k8s > /tmp/cashflow-rendered.yaml
+      - run: kubectl kustomize deploy/k8s-demo > /tmp/cashflow-demo-rendered.yaml
+      - run: docker compose up --build -d --wait
+      - run: node scripts/smoke.mjs
+      - run: npx playwright install --with-deps chromium && npm run test:e2e
+        working-directory: frontend
+      - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml up -d --wait
+      - run: STATEMENT_E2E=1 APP_URL=http://127.0.0.1:8081 npm run test:e2e
+        working-directory: frontend
+      - run: |
+          docker compose down
+          docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml down
+      - run: node scripts/demo.mjs up && node scripts/demo.mjs verify
+      - run: node scripts/demo.mjs stop && node scripts/demo.mjs up && node scripts/demo.mjs verify
+      - run: node scripts/demo.mjs reset --confirm-reset && node scripts/demo.mjs verify
+      - run: node scripts/demo.mjs check-recovery --confirm-outage
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-test-results
+          path: frontend/test-results
+      - run: docker compose down
+        if: always()
+      - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml down
+        if: always()
+      - run: node scripts/demo.mjs stop
+        if: always()

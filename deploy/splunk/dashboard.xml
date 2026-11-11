@@ -1,0 +1,43 @@
+<dashboard version="1.1">
+  <label>Cash-flow pipeline operations (synthetic lab)</label>
+  <description>Queue samples are durable DB state. Counters are process totals, reset on app restart. Missing samples are not proof of health.</description>
+  <row>
+    <panel>
+      <title>Latest operational snapshot and sample age</title>
+      <table>
+        <search>
+          <query>index=main sourcetype="cashflow:operations" earliest=-15m | spath | sort 0 -_time | head 1 | eval sampleAgeSeconds=round(now()-_time) | table state pending waitingToPublish awaitingReconciliation failedPartitions publicationFailed sampleAgeSeconds</query>
+        </search>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Queue stages and failed partitions</title>
+      <chart>
+        <search>
+          <query>index=main sourcetype="cashflow:operations" earliest=-1h | spath | timechart span=10s latest(waitingToPublish) AS unpublished latest(awaitingReconciliation) AS awaiting latest(failedPartitions) AS failedPartitions</query>
+        </search>
+        <option name="charting.chart">line</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Failure and recovery observations (not failure counts)</title>
+      <table>
+        <search>
+          <query>index=main sourcetype="cashflow:operations" earliest=-1h | spath | sort 0 _time | streamstats current=f last(state) AS previous | where state!=previous OR isnull(previous) | table _time previous state pending failedPartitions publicationFailed</query>
+        </search>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Latest per-process totals (reset on restart; do not sum samples)</title>
+      <table>
+        <search>
+          <query>index=main sourcetype="cashflow:operations" earliest=-15m | spath | sort 0 -_time | head 1 | table _time counters.*</query>
+        </search>
+      </table>
+    </panel>
+  </row>
+</dashboard>

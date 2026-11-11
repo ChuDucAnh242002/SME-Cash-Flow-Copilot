@@ -1,0 +1,5 @@
+services:
+  app:
+    image: sme-cashflow-ci:${CI_IMAGE_TAG:?Set a unique CI image tag}
+    ports: !override
+      - "127.0.0.1:${CI_APP_PORT:-8087}:8080"

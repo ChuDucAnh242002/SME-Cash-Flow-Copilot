@@ -1,0 +1,44 @@
+services:
+  app:
+    image: sme-cashflow-observability:local
+    ports: !override
+      - "127.0.0.1:8086:8080"
+  splunk:
+    image: ${SPLUNK_IMAGE:?Set a reviewed versioned Splunk image}
+    environment:
+      SPLUNK_START_ARGS: ${SPLUNK_START_ARGS:?Review the licence and explicitly set acceptance flags}
+      SPLUNK_GENERAL_TERMS: ${SPLUNK_GENERAL_TERMS:?Review the terms and explicitly set acceptance}
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD:?Set a local admin password}
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:?Set a local HEC token}
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - splunk-etc:/opt/splunk/etc
+      - splunk-data:/opt/splunk/var
+      - ./deploy/splunk/default.yml:/tmp/defaults/default.yml:ro
+    mem_limit: 2g
+  telemetry:
+    image: node:22-alpine
+    user: "1000:1000"
+    working_dir: /collector
+    command: ["node", "splunk-collector.mjs"]
+    environment:
+      APP_URL: http://app:8080
+      APP_USER: developer
+      APP_PASSWORD: local-demo-password
+      SPLUNK_HEC_URL: http://splunk:8088/services/collector/event
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:?Set a local HEC token}
+    volumes:
+      - ./scripts/splunk-collector.mjs:/collector/splunk-collector.mjs:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      app:
+        condition: service_healthy
+      splunk:
+        condition: service_started
+    restart: unless-stopped
+volumes:
+  splunk-etc:
+  splunk-data:

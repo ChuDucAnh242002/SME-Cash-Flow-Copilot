@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: copilot
+spec:
+  selector:
+    app: cashflow-copilot
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: copilot
+spec:
+  # One replica keeps the MVP's in-memory login/CSRF sessions consistent.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cashflow-copilot
+  template:
+    metadata:
+      labels:
+        app: cashflow-copilot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: app
+          image: sme-cashflow-copilot:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: cashflow-config
+          env:
+            - name: DATABASE_URL
+              value: jdbc:postgresql://postgres:5432/copilot
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:9092
+            - name: NORDEA_CLIENT_SECRET_FILE
+              value: /run/nordea/client-secret
+            - name: NORDEA_ACCESS_TOKEN_FILE
+              value: /run/nordea/access-token
+          volumeMounts:
+            - name: nordea
+              mountPath: /run/nordea
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 384Mi
+              cpu: 250m
+            limits:
+              memory: 1Gi
+              cpu: "2"
+      volumes:
+        - name: nordea
+          secret:
+            secretName: nordea-credentials
+            optional: true
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
