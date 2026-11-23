@@ -28,6 +28,14 @@ jobs:
         working-directory: frontend
       - run: mvn -B verify
         working-directory: backend
+      - name: Upload Maven test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: maven-test-reports
+          path: backend/target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7
       - run: docker compose config --quiet
       - run: docker compose -p sme-cashflow-statement-ci -f compose.yaml -f compose.statement.yaml config --quiet
       - run: bash -n scripts/k8s-db.sh scripts/ci-compose.sh && node --test scripts/*.test.mjs
