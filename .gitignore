@@ -13,3 +13,4 @@ frontend/playwright-report/
 *.dump
 *.dump.sha256
 .DS_Store
+.devbox/

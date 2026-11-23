@@ -131,6 +131,23 @@ survives pod restarts, **not node/disk loss**; this is not an HA deployment.
 
 ## Verification
 
+### Optional Devbox workflow
+
+Install [Devbox](https://www.jetify.com/docs/devbox/) and run from the repository
+root:
+
+```sh
+devbox run doctor  # show the Java, Maven, Node and npm versions
+devbox run setup   # install frontend dependencies with npm ci
+devbox run test    # forecast unit test and frontend unit tests
+```
+
+Devbox provides a locked Java 21, Maven and Node 22 toolchain; the exact Java
+patch can vary by platform. `setup` replaces `frontend/node_modules` as `npm ci`
+normally does. Maven downloads its dependencies when tests first run. These
+focused tests need no running services or bank credentials. They do not replace
+the PostgreSQL/Kafka integration and browser tests or the Docker demo.
+
 Recorded validation covers **39 backend tests**, **16 frontend unit tests**,
 **21 demo browser tests on Kubernetes**, and **9 backup/restore CLI tests**.
 Backend integration tests use real PostgreSQL through Testcontainers and embedded Kafka.
