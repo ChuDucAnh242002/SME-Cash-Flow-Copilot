@@ -138,7 +138,8 @@ root:
 
 ```sh
 devbox run doctor  # show the Java, Maven, Node and npm versions
-devbox run setup   # install frontend dependencies with npm ci
+devbox run setup   # install frontend dependencies and set up the optional kind lab
+devbox run setup-frontend  # install frontend dependencies only
 devbox run test    # forecast unit test and frontend unit tests
 ```
 
@@ -147,6 +148,12 @@ patch can vary by platform. `setup` replaces `frontend/node_modules` as `npm ci`
 normally does. Maven downloads its dependencies when tests first run. These
 focused tests need no running services or bank credentials. They do not replace
 the PostgreSQL/Kafka integration and browser tests or the Docker demo.
+
+The optional shared kind lab additionally offers `devbox run pull`,
+`devbox run deploy-all` and `devbox run deploy sme-cashflow`. It requires
+`di-agent` to be checked out as a sibling directory. See its
+[workspace lab guide](https://github.com/ChuDucAnh242002/di-agent#shared-devbox-kubernetes-lab)
+for prerequisites, synthetic-data and persistence safeguards.
 
 Recorded validation covers **39 backend tests**, **16 frontend unit tests**,
 **21 demo browser tests on Kubernetes**, and **9 backup/restore CLI tests**.
